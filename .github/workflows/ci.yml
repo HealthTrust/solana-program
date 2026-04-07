@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: solanafoundation/anchor:v0.32.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: build program
+        run: anchor build
+
+      - name: run tests
+        run: anchor test

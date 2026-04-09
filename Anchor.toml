@@ -6,6 +6,12 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
+# Run `anchor keys list` after `anchor build` and paste the generated IDs here.
+# The placeholder IDs below are NOT valid — the build will fail until replaced.
+pricing_config = "PCFGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+data_registry  = "DREGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+order_handler  = "ORDRxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# Legacy scaffold — can be removed once migration is complete:
 healthtrust = "D8snznSwvLyCsk17CxbukmKZHGsBxEx23Qi1kaqDe5Ku"
 
 [registry]

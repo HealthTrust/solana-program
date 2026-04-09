@@ -1,0 +1,24 @@
+[package]
+name = "order_handler"
+version = "0.1.0"
+description = "HealthTrust order handler program"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "order_handler"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+anchor-debug = []
+
+[dependencies]
+anchor-lang = "0.32.1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

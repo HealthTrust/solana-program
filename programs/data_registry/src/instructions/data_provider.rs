@@ -10,6 +10,27 @@ use crate::events::{
     MetaEntryCreated, UploadUnitClosed, UploadUnitCreated,
 };
 use crate::params::UploadNewMetaParams;
+use crate::state::UploadUnit;
+
+fn initialize_upload_unit(
+    unit: &mut UploadUnit,
+    meta_id: u64,
+    unit_index: u32,
+    raw_cid: String,
+    day_start_timestamp: i64,
+    day_end_timestamp: i64,
+    date_of_creation: i64,
+    bump: u8,
+) {
+    unit.meta_id = meta_id;
+    unit.unit_index = unit_index;
+    unit.raw_cid = raw_cid;
+    unit.day_start_timestamp = day_start_timestamp;
+    unit.day_end_timestamp = day_end_timestamp;
+    unit.feat_cid = String::new();
+    unit.date_of_creation = date_of_creation;
+    unit.bump = bump;
+}
 
 pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams) -> Result<()> {
     let state = &mut ctx.accounts.registry_state;
@@ -59,14 +80,16 @@ pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams)
     meta.bump = ctx.bumps.data_entry_meta;
 
     let unit = &mut ctx.accounts.upload_unit;
-    unit.meta_id = meta_id;
-    unit.unit_index = 0;
-    unit.raw_cid = params.raw_cid.clone();
-    unit.day_start_timestamp = params.day_start_timestamp;
-    unit.day_end_timestamp = params.day_end_timestamp;
-    unit.feat_cid = String::new();
-    unit.date_of_creation = clock.unix_timestamp;
-    unit.bump = ctx.bumps.upload_unit;
+    initialize_upload_unit(
+        unit,
+        meta_id,
+        0,
+        params.raw_cid.clone(),
+        params.day_start_timestamp,
+        params.day_end_timestamp,
+        clock.unix_timestamp,
+        ctx.bumps.upload_unit,
+    );
 
     state.next_meta_id = state
         .next_meta_id
@@ -132,14 +155,16 @@ pub fn register_raw_upload(
     let unit_index = meta.unit_count;
 
     let unit = &mut ctx.accounts.upload_unit;
-    unit.meta_id = meta.meta_id;
-    unit.unit_index = unit_index;
-    unit.raw_cid = raw_cid.clone();
-    unit.day_start_timestamp = day_start_timestamp;
-    unit.day_end_timestamp = day_end_timestamp;
-    unit.feat_cid = String::new();
-    unit.date_of_creation = clock.unix_timestamp;
-    unit.bump = ctx.bumps.upload_unit;
+    initialize_upload_unit(
+        unit,
+        meta.meta_id,
+        unit_index,
+        raw_cid.clone(),
+        day_start_timestamp,
+        day_end_timestamp,
+        clock.unix_timestamp,
+        ctx.bumps.upload_unit,
+    );
 
     meta.unit_count = meta
         .unit_count

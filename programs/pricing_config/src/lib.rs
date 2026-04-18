@@ -15,7 +15,7 @@
 
 use anchor_lang::prelude::*;
 
-declare_id!("PCFGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+declare_id!("7wdywHkoSnCwSYxBiE1xdweqkdKxi4KFXUtscK8mCTTN");
 // Replace with: `anchor keys list` after running `anchor build`
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -256,7 +256,7 @@ pub struct InitTypeMultiplier<'info> {
         init,
         payer = owner,
         space = 8 + TypeMultiplier::INIT_SPACE,
-        seeds = [b"type_multiplier", &data_type_hash],
+        seeds = [b"type_multiplier", data_type_hash.as_ref()],
         bump,
     )]
     pub type_multiplier: Account<'info, TypeMultiplier>,
@@ -280,7 +280,7 @@ pub struct InitTypeMultiplier<'info> {
 pub struct UpdateMultiplier<'info> {
     #[account(
         mut,
-        seeds = [b"type_multiplier", &data_type_hash],
+        seeds = [b"type_multiplier", data_type_hash.as_ref()],
         bump = type_multiplier.bump,
     )]
     pub type_multiplier: Account<'info, TypeMultiplier>,

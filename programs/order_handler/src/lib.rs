@@ -45,7 +45,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
-declare_id!("ORDRxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+declare_id!("GVUZtHZHr1tDxw3Pt142BxqgkS3dfDpPbqEznsFT9jV4");
 // Replace with: `anchor keys list` after running `anchor build`
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -466,7 +466,7 @@ pub mod order_handler {
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
 pub enum JobStatus {
     /// Placeholder — a zero-value so uninitialized accounts are distinguishable.
     None,
@@ -476,6 +476,21 @@ pub enum JobStatus {
     Executed,
     Completed,
     Cancelled,
+}
+
+impl core::fmt::Display for JobStatus {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let status = match self {
+            JobStatus::None => "None",
+            JobStatus::PendingPreflight => "PendingPreflight",
+            JobStatus::AwaitingConfirmation => "AwaitingConfirmation",
+            JobStatus::Confirmed => "Confirmed",
+            JobStatus::Executed => "Executed",
+            JobStatus::Completed => "Completed",
+            JobStatus::Cancelled => "Cancelled",
+        };
+        write!(f, "{}", status)
+    }
 }
 
 // ─── Account Structs ──────────────────────────────────────────────────────────

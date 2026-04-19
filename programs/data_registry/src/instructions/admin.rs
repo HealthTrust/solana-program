@@ -5,7 +5,11 @@ use crate::errors::RegistryError;
 use crate::events::{EmergencyWithdrawal, OwnershipTransferred, PausedStateChanged};
 
 pub fn initialize_registry(ctx: Context<InitializeRegistry>, tee_authority: Pubkey) -> Result<()> {
-    require_keys_neq!(tee_authority, Pubkey::default(), RegistryError::InvalidAuthority);
+    require_keys_neq!(
+        tee_authority,
+        Pubkey::default(),
+        RegistryError::InvalidAuthority
+    );
     let s = &mut ctx.accounts.registry_state;
     s.owner = ctx.accounts.owner.key();
     s.pricing_program = Pubkey::default();
@@ -28,7 +32,11 @@ pub fn set_tee_authority(
     ctx: Context<AuthorizedRegistryAction>,
     tee_authority: Pubkey,
 ) -> Result<()> {
-    require_keys_neq!(tee_authority, Pubkey::default(), RegistryError::InvalidAuthority);
+    require_keys_neq!(
+        tee_authority,
+        Pubkey::default(),
+        RegistryError::InvalidAuthority
+    );
     ctx.accounts.registry_state.tee_authority = tee_authority;
     Ok(())
 }

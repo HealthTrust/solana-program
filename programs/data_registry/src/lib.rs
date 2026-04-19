@@ -49,17 +49,11 @@ pub mod data_registry {
         instructions::transfer_registry_ownership(ctx, new_owner)
     }
 
-    pub fn emergency_withdraw_sol(
-        ctx: Context<EmergencyWithdrawSol>,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn emergency_withdraw_sol(ctx: Context<EmergencyWithdrawSol>, amount: u64) -> Result<()> {
         instructions::emergency_withdraw_sol(ctx, amount)
     }
 
-    pub fn upload_new_meta(
-        ctx: Context<UploadNewMeta>,
-        params: UploadNewMetaParams,
-    ) -> Result<()> {
+    pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams) -> Result<()> {
         instructions::upload_new_meta(ctx, params)
     }
 
@@ -88,10 +82,7 @@ pub mod data_registry {
         instructions::update_upload_unit(ctx, meta_id, unit_index, feat_cid)
     }
 
-    pub fn close_data_entry_meta(
-        ctx: Context<CloseDataEntryMeta>,
-        meta_id: u64,
-    ) -> Result<()> {
+    pub fn close_data_entry_meta(ctx: Context<CloseDataEntryMeta>, meta_id: u64) -> Result<()> {
         instructions::close_data_entry_meta(ctx, meta_id)
     }
 

@@ -35,7 +35,10 @@ fn initialize_upload_unit(
 pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams) -> Result<()> {
     let state = &mut ctx.accounts.registry_state;
     require!(!state.paused, RegistryError::Paused);
-    require!(!params.data_type_hashes.is_empty(), RegistryError::EmptyDataTypes);
+    require!(
+        !params.data_type_hashes.is_empty(),
+        RegistryError::EmptyDataTypes
+    );
     require!(
         params.data_type_hashes.len() <= MAX_DATA_TYPES,
         RegistryError::TooManyDataTypes

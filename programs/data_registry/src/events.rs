@@ -4,7 +4,7 @@ use anchor_lang::prelude::*;
 pub struct MetaEntryCreated {
     pub meta_id: u64,
     pub owner: Pubkey,
-    pub data_type_hashes: Vec<[u8; 32]>,
+    pub data_types: Vec<String>,
     pub total_duration: u64,
     pub date_of_creation: i64,
 }

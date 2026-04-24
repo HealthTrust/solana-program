@@ -25,10 +25,6 @@ const orderConfigSeed = Buffer.from("order_config");
 const jobSeed = Buffer.from("job");
 const escrowSeed = Buffer.from("escrow");
 
-function hashDataType(value: string): number[] {
-  return [...createHash("sha256").update(value).digest()];
-}
-
 function jobIdBuffer(jobId: anchor.BN): Buffer {
   return jobId.toArrayLike(Buffer, "le", 8);
 }
@@ -123,7 +119,7 @@ async function createRequestedJob(
   const params = {
     templateId: 1,
     numDays: 1,
-    dataTypeHashes: [hashDataType("heart_rate"), hashDataType("sleep")],
+    dataTypes: ["heart_rate", "sleep"],
     maxParticipants: 10,
     startDayUtc: new anchor.BN(0),
     filterQuery: "age BETWEEN 20 AND 40",

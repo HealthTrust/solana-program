@@ -3,7 +3,7 @@ use anchor_lang::prelude::*;
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct UploadNewMetaParams {
     pub raw_cid: String,
-    pub data_type_hashes: Vec<[u8; 32]>,
+    pub data_types: Vec<String>,
     pub device_type: String,
     pub device_model: String,
     pub service_provider: String,

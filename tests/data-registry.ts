@@ -1,7 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
-import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { expect } from "chai";
@@ -50,11 +49,6 @@ const device = {
   deviceModel: "Fitbit Charge 5",
   serviceProvider: "ConfiState Health",
 };
-
-// Program stores data types as [u8; 32], so hash strings client-side first.
-function hashDataType(value: string): number[] {
-  return [...createHash("sha256").update(value).digest()];
-}
 
 // PDA seed helpers: convert JS numbers/BN into canonical little-endian bytes.
 function metaIdBuffer(metaId: anchor.BN): Buffer {
@@ -183,7 +177,7 @@ async function createMetaEntry(
   // Client args mirror UploadNewMetaParams in the Rust program.
   const params = {
     rawCid: "QmY7z5f8b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1",
-    dataTypeHashes: [hashDataType("sleep"), hashDataType("heart_rate")],
+    dataTypes: ["sleep", "heart_rate"],
     deviceType: device.deviceType,
     deviceModel: device.deviceModel,
     serviceProvider: device.serviceProvider,
@@ -261,7 +255,7 @@ describe("data_registry migration parity", () => {
     expect(meta.serviceProvider).to.equal(device.serviceProvider);
     expect(meta.totalDuration.toNumber()).to.equal(86_400);
     expect(meta.unitCount).to.equal(1);
-    expect(meta.dataTypeHashes).to.deep.equal(created.params.dataTypeHashes);
+    expect(meta.dataTypes).to.deep.equal(created.params.dataTypes);
 
     // Assert: first upload unit is created as index 0.
     expect(unit.metaId.toString()).to.equal(created.metaId.toString());
@@ -401,7 +395,7 @@ describe("data_registry migration parity", () => {
         program.methods
           .uploadNewMeta({
             rawCid: "QmPausedCreate1111111111111111111111111111111111111",
-            dataTypeHashes: [hashDataType("steps")],
+            dataTypes: ["steps"],
             deviceType: device.deviceType,
             deviceModel: device.deviceModel,
             serviceProvider: device.serviceProvider,

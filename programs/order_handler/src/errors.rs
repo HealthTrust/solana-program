@@ -14,7 +14,7 @@ pub enum OrderError {
     InvalidNumDays,
     #[msg("template_id must be greater than zero")]
     InvalidTemplateId,
-    #[msg("data_type_hashes must not be empty")]
+    #[msg("data_types must not be empty")]
     EmptyDataTypes,
     #[msg("Too many data types (max 8)")]
     TooManyDataTypes,

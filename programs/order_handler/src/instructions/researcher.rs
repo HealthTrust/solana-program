@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
-use crate::constants::MAX_JOB_DATA_TYPES;
+use crate::constants::{MAX_JOB_DATA_TYPE_LEN, MAX_JOB_DATA_TYPES};
 use crate::contexts::{CancelJob, ConfirmJobAndPay, RequestJob, SweepVaultDust};
 use crate::errors::OrderError;
 use crate::events::{JobCancelled, JobConfirmed, JobRequested, VaultDustSwept};
@@ -11,16 +11,20 @@ use crate::state::JobStatus;
 pub fn request_job(ctx: Context<RequestJob>, params: JobParams) -> Result<()> {
     require!(params.num_days > 0, OrderError::InvalidNumDays);
     require!(params.template_id > 0, OrderError::InvalidTemplateId);
-    require!(
-        !params.data_type_hashes.is_empty(),
-        OrderError::EmptyDataTypes
-    );
+    require!(!params.data_types.is_empty(), OrderError::EmptyDataTypes);
     require!(
         params.max_participants > 0,
         OrderError::InvalidMaxParticipants
     );
     require!(
-        params.data_type_hashes.len() <= MAX_JOB_DATA_TYPES,
+        params.data_types.len() <= MAX_JOB_DATA_TYPES,
+        OrderError::TooManyDataTypes
+    );
+    require!(
+        params
+            .data_types
+            .iter()
+            .all(|data_type| !data_type.is_empty() && data_type.len() <= MAX_JOB_DATA_TYPE_LEN),
         OrderError::TooManyDataTypes
     );
 
@@ -38,7 +42,7 @@ pub fn request_job(ctx: Context<RequestJob>, params: JobParams) -> Result<()> {
     job.status = JobStatus::PendingPreflight;
     job.template_id = params.template_id;
     job.num_days = params.num_days;
-    job.data_type_hashes = params.data_type_hashes.clone();
+    job.data_types = params.data_types.clone();
     job.max_participants = params.max_participants;
     job.start_day_utc = params.start_day_utc;
     job.filter_query = params.filter_query.clone();
@@ -63,7 +67,7 @@ pub fn request_job(ctx: Context<RequestJob>, params: JobParams) -> Result<()> {
         researcher: job.researcher,
         template_id: params.template_id,
         num_days: params.num_days,
-        data_type_hashes: params.data_type_hashes,
+        data_types: params.data_types,
         max_participants: params.max_participants,
     });
     Ok(())

@@ -43,8 +43,8 @@ pub struct Job {
     pub status: JobStatus,
     pub template_id: u32,
     pub num_days: u32,
-    #[max_len(8)]
-    pub data_type_hashes: Vec<[u8; 32]>,
+    #[max_len(8, 32)]
+    pub data_types: Vec<String>,
     pub max_participants: u32,
     pub start_day_utc: i64,
     #[max_len(128)]

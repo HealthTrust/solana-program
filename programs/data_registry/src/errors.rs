@@ -10,7 +10,7 @@ pub enum RegistryError {
     NotOwner,
     #[msg("Caller is not the TEE authority")]
     NotTeeAuthority,
-    #[msg("data_type_hashes must not be empty")]
+    #[msg("data_types must not be empty")]
     EmptyDataTypes,
     #[msg("Too many data types (max 8)")]
     TooManyDataTypes,

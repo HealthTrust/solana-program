@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{MAX_CHRONIC_CONDITIONS, MAX_DATA_TYPES};
+use crate::constants::{MAX_CHRONIC_CONDITIONS, MAX_DATA_TYPE_LEN, MAX_DATA_TYPES};
 use crate::contexts::{
     CloseDataEntryMeta, CloseUploadUnit, RegisterRawUpload, UpdateUploadUnit, UploadNewMeta,
 };
@@ -35,12 +35,16 @@ fn initialize_upload_unit(
 pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams) -> Result<()> {
     let state = &mut ctx.accounts.registry_state;
     require!(!state.paused, RegistryError::Paused);
+    require!(!params.data_types.is_empty(), RegistryError::EmptyDataTypes);
     require!(
-        !params.data_type_hashes.is_empty(),
-        RegistryError::EmptyDataTypes
+        params.data_types.len() <= MAX_DATA_TYPES,
+        RegistryError::TooManyDataTypes
     );
     require!(
-        params.data_type_hashes.len() <= MAX_DATA_TYPES,
+        params
+            .data_types
+            .iter()
+            .all(|data_type| !data_type.is_empty() && data_type.len() <= MAX_DATA_TYPE_LEN),
         RegistryError::TooManyDataTypes
     );
     require!(
@@ -75,7 +79,7 @@ pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams)
     meta.smoker = params.smoker;
     meta.diet = params.diet;
     meta.chronic_conditions = params.chronic_conditions.clone();
-    meta.data_type_hashes = params.data_type_hashes.clone();
+    meta.data_types = params.data_types.clone();
     meta.total_duration = total_duration;
     meta.unit_count = 1;
     meta.date_of_creation = clock.unix_timestamp;
@@ -102,7 +106,7 @@ pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams)
     emit!(MetaEntryCreated {
         meta_id,
         owner: meta.owner,
-        data_type_hashes: params.data_type_hashes.clone(),
+        data_types: params.data_types.clone(),
         total_duration,
         date_of_creation: clock.unix_timestamp,
     });

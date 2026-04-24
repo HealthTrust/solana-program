@@ -75,10 +75,6 @@ function readKeypairFromEnv(envName: string): Keypair | null {
   return Keypair.fromSecretKey(Uint8Array.from(secret));
 }
 
-function hashDataType(value: string): number[] {
-  return [...createHash("sha256").update(value).digest()];
-}
-
 function metaIdBuffer(metaId: anchor.BN): Buffer {
   return metaId.toArrayLike(Buffer, "le", 8);
 }
@@ -596,7 +592,7 @@ describeDevnet("devnet deployed contracts full flow", () => {
     await dataRegistry.methods
       .uploadNewMeta({
         rawCid: "QmDevnetRawInitial111111111111111111111111111111111",
-        dataTypeHashes: [hashDataType("heart_rate"), hashDataType("sleep")],
+        dataTypes: ["heart_rate", "sleep"],
         deviceType: "Smartwatch",
         deviceModel: "Devnet Flow Watch",
         serviceProvider: "HealthTrust Devnet",
@@ -688,7 +684,7 @@ describeDevnet("devnet deployed contracts full flow", () => {
       .requestJob({
         templateId: 1,
         numDays: 2,
-        dataTypeHashes: [hashDataType("heart_rate"), hashDataType("sleep")],
+        dataTypes: ["heart_rate", "sleep"],
         maxParticipants: 2,
         startDayUtc: new anchor.BN(0),
         filterQuery: `devnet_meta_id = ${metaId.toString()}`,
@@ -892,7 +888,7 @@ describeDevnet("devnet deployed contracts full flow", () => {
       .requestJob({
         templateId: 1,
         numDays: 1,
-        dataTypeHashes: [hashDataType("heart_rate")],
+        dataTypes: ["heart_rate"],
         maxParticipants: 1,
         startDayUtc: new anchor.BN(0),
         filterQuery: "guardrail_devnet = true",

@@ -15,7 +15,7 @@
 
 use anchor_lang::prelude::*;
 
-declare_id!("PCFGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+declare_id!("7wdywHkoSnCwSYxBiE1xdweqkdKxi4KFXUtscK8mCTTN");
 // Replace with: `anchor keys list` after running `anchor build`
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -100,7 +100,10 @@ pub mod pricing_config {
         require_keys_neq!(new_owner, Pubkey::default(), PricingError::InvalidOwner);
         let previous = ctx.accounts.pricing_params.owner;
         ctx.accounts.pricing_params.owner = new_owner;
-        emit!(OwnershipTransferred { previous, new: new_owner });
+        emit!(OwnershipTransferred {
+            previous,
+            new: new_owner
+        });
         Ok(())
     }
 
@@ -178,15 +181,15 @@ fn calculate_scarcity_multiplier(total_duration: u64) -> u64 {
 #[account]
 #[derive(InitSpace)]
 pub struct PricingParams {
-    pub owner: Pubkey,          // 32
-    pub base_price: u64,        // 8 — per-participant base (lamports)
-    pub duration_factor: u64,   // 8 — per-participant per-day multiplier (lamports)
-    pub platform_fee_bps: u16,  // 2 — e.g. 1500 = 15%
-    pub min_total_charge: u64,  // 8 — minimum job total (lamports)
-    pub preflight_fee: u64,     // 8 — flat preflight charge (lamports)
-    pub bump: u8,               // 1
-    // Reserved for future approved_registry access control:
-    // pub approved_registry: Pubkey,
+    pub owner: Pubkey,         // 32
+    pub base_price: u64,       // 8 — per-participant base (lamports)
+    pub duration_factor: u64,  // 8 — per-participant per-day multiplier (lamports)
+    pub platform_fee_bps: u16, // 2 — e.g. 1500 = 15%
+    pub min_total_charge: u64, // 8 — minimum job total (lamports)
+    pub preflight_fee: u64,    // 8 — flat preflight charge (lamports)
+    pub bump: u8,              // 1
+                               // Reserved for future approved_registry access control:
+                               // pub approved_registry: Pubkey,
 }
 
 /// One PDA per data type.
@@ -196,13 +199,13 @@ pub struct PricingParams {
 #[derive(InitSpace)]
 pub struct TypeMultiplier {
     /// sha256(data_type_string) — stored for on-chain auditability.
-    pub data_type_hash: [u8; 32],    // 32
+    pub data_type_hash: [u8; 32], // 32
     /// Cumulative seconds of data across all uploads of this type.
-    pub total_duration: u64,          // 8
+    pub total_duration: u64, // 8
     /// Fixed-point multiplier with SCARCITY_PRECISION denominator.
     /// Decreases as more data is uploaded (less scarcity).
-    pub multiplier: u64,              // 8
-    pub bump: u8,                     // 1
+    pub multiplier: u64, // 8
+    pub bump: u8, // 1
 }
 
 // ─── Instruction Params ───────────────────────────────────────────────────────
@@ -256,7 +259,7 @@ pub struct InitTypeMultiplier<'info> {
         init,
         payer = owner,
         space = 8 + TypeMultiplier::INIT_SPACE,
-        seeds = [b"type_multiplier", &data_type_hash],
+        seeds = [b"type_multiplier", data_type_hash.as_ref()],
         bump,
     )]
     pub type_multiplier: Account<'info, TypeMultiplier>,
@@ -280,7 +283,7 @@ pub struct InitTypeMultiplier<'info> {
 pub struct UpdateMultiplier<'info> {
     #[account(
         mut,
-        seeds = [b"type_multiplier", &data_type_hash],
+        seeds = [b"type_multiplier", data_type_hash.as_ref()],
         bump = type_multiplier.bump,
     )]
     pub type_multiplier: Account<'info, TypeMultiplier>,

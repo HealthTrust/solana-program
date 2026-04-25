@@ -2,7 +2,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Healthtrust } from "../target/types/healthtrust";
 
-describe("healthtrust", () => {
+describe.skip("healthtrust", () => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
 

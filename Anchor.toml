@@ -6,13 +6,13 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-# Run `anchor keys list` after `anchor build` and paste the generated IDs here.
-# The placeholder IDs below are NOT valid — the build will fail until replaced.
-pricing_config = "PCFGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-data_registry  = "DREGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-order_handler  = "ORDRxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-# Legacy scaffold — can be removed once migration is complete:
-healthtrust = "D8snznSwvLyCsk17CxbukmKZHGsBxEx23Qi1kaqDe5Ku"
+data_registry  = "3zmhW1fxXXGKCn31Uz8BaZ34gmNRGgAG6LFk1P6gWkDT"
+order_handler  = "GVUZtHZHr1tDxw3Pt142BxqgkS3dfDpPbqEznsFT9jV4"
+
+
+[programs.devnet]
+    data_registry  = "3zmhW1fxXXGKCn31Uz8BaZ34gmNRGgAG6LFk1P6gWkDT"
+    order_handler  = "GVUZtHZHr1tDxw3Pt142BxqgkS3dfDpPbqEznsFT9jV4"
 
 [registry]
 url = "https://api.apr.dev"
@@ -22,4 +22,4 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+test = "node ./node_modules/ts-mocha/bin/ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""

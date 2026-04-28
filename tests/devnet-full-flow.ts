@@ -349,6 +349,10 @@ async function ensureRegistryReady(): Promise<{
   }
 
   if (configuredTee) {
+    console.log("configuredTee", configuredTee?.publicKey.toBase58());
+    console.log("currentTee", currentTee.toBase58());
+    console.log("owner", owner.toBase58());
+
     if (!currentTee.equals(configuredTee.publicKey)) {
       if (!owner.equals(provider.publicKey)) {
         throw new Error(

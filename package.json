@@ -1,6 +1,11 @@
 {
   "license": "ISC",
   "scripts": {
+    "data-registry": "node ./scripts/data-registry-cli.js",
+    "data-registry:real": "node ./scripts/data-registry-cli.js populate-real",
+    "order-handler": "node ./scripts/order-handler-cli.js",
+    "populate:data-registry": "node ./scripts/populate-data-registry.js",
+    "read:data-registry": "node ./scripts/read-data-registry.js",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
   },

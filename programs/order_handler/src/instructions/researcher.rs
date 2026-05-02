@@ -46,6 +46,7 @@ pub fn request_job(ctx: Context<RequestJob>, params: JobParams) -> Result<()> {
     job.max_participants = params.max_participants;
     job.start_day_utc = params.start_day_utc;
     job.filter_query = params.filter_query.clone();
+    job.result_encryption_key = params.result_encryption_key.clone();
     job.escrowed = 0;
     job.effective_participants_scaled = 0;
     job.quality_tier = 0;

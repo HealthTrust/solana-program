@@ -8,6 +8,7 @@ pub struct JobParams {
     pub max_participants: u32,
     pub start_day_utc: i64,
     pub filter_query: String,
+    pub result_encryption_key: String,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]

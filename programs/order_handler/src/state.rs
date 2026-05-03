@@ -49,6 +49,8 @@ pub struct Job {
     pub start_day_utc: i64,
     #[max_len(128)]
     pub filter_query: String,
+    #[max_len(512)]
+    pub result_encryption_key: String,
     pub escrowed: u64,
     pub effective_participants_scaled: u64,
     pub quality_tier: u8,

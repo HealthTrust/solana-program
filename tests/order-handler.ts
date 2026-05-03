@@ -123,6 +123,7 @@ async function createRequestedJob(
     maxParticipants: 10,
     startDayUtc: new anchor.BN(0),
     filterQuery: "age BETWEEN 20 AND 40",
+    resultEncryptionKey: "test-encryption-key-123456789",
   };
 
   await program.methods
@@ -175,6 +176,7 @@ describe("order_handler migration parity", () => {
     expect(new PublicKey(requestedJob.researcher).equals(researcher.publicKey)).to
       .equal(true);
     expect(requestedJob.status).to.deep.equal({ pendingPreflight: {} });
+    expect(requestedJob.resultEncryptionKey).to.equal("test-encryption-key-123456789");
 
     const preflight = {
       effectiveParticipantsScaled: new anchor.BN(10),

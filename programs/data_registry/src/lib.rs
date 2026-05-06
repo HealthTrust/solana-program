@@ -11,7 +11,7 @@ pub mod state;
 use contexts::*;
 use params::UploadNewMetaParams;
 
-declare_id!("3zmhW1fxXXGKCn31Uz8BaZ34gmNRGgAG6LFk1P6gWkDT");
+declare_id!("EitDizrAP7BH192FP4GivCWZrdbUjVoWJRUfQRRHbGq3");
 
 #[program]
 pub mod data_registry {

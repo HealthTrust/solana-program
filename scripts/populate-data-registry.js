@@ -460,6 +460,7 @@ async function main() {
   log(`Wallet: ${provider.publicKey.toBase58()}`);
 
   const program = createProgram(provider);
+  log(`Program ID: ${program.programId.toBase58()}`);
   const teeKeypair = options.teeKeypair ? readKeypairFromFile(options.teeKeypair) : null;
   const registry = await ensureRegistryReady(program, provider, options, payload, teeKeypair);
   const payloadNeedsFeatUpdates = payload.entries.some(entryNeedsFeatUpdates);

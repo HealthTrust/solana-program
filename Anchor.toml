@@ -5,21 +5,20 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-data_registry  = "3zmhW1fxXXGKCn31Uz8BaZ34gmNRGgAG6LFk1P6gWkDT"
-order_handler  = "GVUZtHZHr1tDxw3Pt142BxqgkS3dfDpPbqEznsFT9jV4"
-
-
 [programs.devnet]
-    data_registry  = "3zmhW1fxXXGKCn31Uz8BaZ34gmNRGgAG6LFk1P6gWkDT"
-    order_handler  = "GVUZtHZHr1tDxw3Pt142BxqgkS3dfDpPbqEznsFT9jV4"
+data_registry = "EitDizrAP7BH192FP4GivCWZrdbUjVoWJRUfQRRHbGq3"
+order_handler = "BmcLrSxve59aReXFqCfZ6gWSfzmZyDPVLAKNX8sAmY9F"
+
+[programs.localnet]
+data_registry = "EitDizrAP7BH192FP4GivCWZrdbUjVoWJRUfQRRHbGq3"
+order_handler = "BmcLrSxve59aReXFqCfZ6gWSfzmZyDPVLAKNX8sAmY9F"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "/mnt/c/Program\\ Files/nodejs/node ./node_modules/ts-mocha/bin/ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+test = '/mnt/c/Program\ Files/nodejs/node ./node_modules/ts-mocha/bin/ts-mocha -p ./tsconfig.json -t 1000000 "tests/**/*.ts"'

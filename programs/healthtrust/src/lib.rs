@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("48MrGAXhM98UYTYbc1bVRi267A5SMGsBvC3fLwDPQ3Em");
+declare_id!("gU8YvjomPHc9aviuNUwWoxD8Fpx1kKKgEY5FKLBm14E");
 
 #[program]
 pub mod healthtrust {

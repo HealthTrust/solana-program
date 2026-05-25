@@ -1,0 +1,7 @@
+{
+  "cluster": "devnet",
+  "dataRegistryProgramId": "AYz31PCHBRv5iRBXG3VFYjQpLS28eiDdYw7EM7cTpLwz",
+  "orderHandlerProgramId": "J1Qkfs3NbRftniS1tznymVQPKgxzoUgPWsNpAYMMSeH5",
+  "dataRegistryKeypair": ".anchor/env/staging/data_registry-keypair.json",
+  "orderHandlerKeypair": ".anchor/env/staging/order_handler-keypair.json"
+}

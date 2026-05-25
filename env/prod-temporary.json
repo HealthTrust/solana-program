@@ -1,0 +1,7 @@
+{
+  "cluster": "devnet",
+  "dataRegistryProgramId": "EitDizrAP7BH192FP4GivCWZrdbUjVoWJRUfQRRHbGq3",
+  "orderHandlerProgramId": "BmcLrSxve59aReXFqCfZ6gWSfzmZyDPVLAKNX8sAmY9F",
+  "dataRegistryKeypair": null,
+  "orderHandlerKeypair": null
+}

@@ -51,6 +51,8 @@ pub struct Job {
     pub filter_query: String,
     #[max_len(512)]
     pub result_encryption_key: String,
+    #[max_len(32)]
+    pub algorithm_id: String,
     pub escrowed: u64,
     pub effective_participants_scaled: u64,
     pub quality_tier: u8,

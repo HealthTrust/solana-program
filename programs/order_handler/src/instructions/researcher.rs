@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
-use crate::constants::{MAX_JOB_DATA_TYPE_LEN, MAX_JOB_DATA_TYPES};
+use crate::constants::{MAX_ALGORITHM_ID_LEN, MAX_JOB_DATA_TYPE_LEN, MAX_JOB_DATA_TYPES};
 use crate::contexts::{CancelJob, ConfirmJobAndPay, RequestJob, SweepVaultDust};
 use crate::errors::OrderError;
 use crate::events::{JobCancelled, JobConfirmed, JobRequested, VaultDustSwept};
@@ -27,6 +27,11 @@ pub fn request_job(ctx: Context<RequestJob>, params: JobParams) -> Result<()> {
             .all(|data_type| !data_type.is_empty() && data_type.len() <= MAX_JOB_DATA_TYPE_LEN),
         OrderError::TooManyDataTypes
     );
+    // algorithm_id is optional (empty = TEE default); only bound its length.
+    require!(
+        params.algorithm_id.len() <= MAX_ALGORITHM_ID_LEN,
+        OrderError::AlgorithmIdTooLong
+    );
 
     let order_config = &mut ctx.accounts.order_config;
     let job_id = order_config.next_job_id;
@@ -47,6 +52,7 @@ pub fn request_job(ctx: Context<RequestJob>, params: JobParams) -> Result<()> {
     job.start_day_utc = params.start_day_utc;
     job.filter_query = params.filter_query.clone();
     job.result_encryption_key = params.result_encryption_key.clone();
+    job.algorithm_id = params.algorithm_id.clone();
     job.escrowed = 0;
     job.effective_participants_scaled = 0;
     job.quality_tier = 0;

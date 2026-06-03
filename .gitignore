@@ -16,3 +16,7 @@ docs/
 !.env.example
 !.env.*.example
 backups
+
+# Local-machine ops scripts (WSL paths, localhost validator, secret materialization)
+scripts/*.sh
+scripts/convert-authority-keys.js

@@ -693,6 +693,7 @@ describeDevnet("devnet deployed contracts full flow", () => {
         startDayUtc: new anchor.BN(0),
         filterQuery: `devnet_meta_id = ${metaId.toString()}`,
         resultEncryptionKey: "devnet-flow-encryption-key-001",
+        algorithmId: "cohort_means",
       })
       .accountsStrict({
         orderConfig,
@@ -898,6 +899,7 @@ describeDevnet("devnet deployed contracts full flow", () => {
         startDayUtc: new anchor.BN(0),
         filterQuery: "guardrail_devnet = true",
         resultEncryptionKey: "devnet-guardrail-encryption-key-002",
+        algorithmId: "cohort_means",
       })
       .accountsStrict({
         orderConfig,

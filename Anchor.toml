@@ -6,12 +6,12 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-data_registry = "EitDizrAP7BH192FP4GivCWZrdbUjVoWJRUfQRRHbGq3"
-order_handler = "BmcLrSxve59aReXFqCfZ6gWSfzmZyDPVLAKNX8sAmY9F"
+data_registry = "Dp6VU1JPpAMhzrQfXtjxQFs2CMaMRX4f53sNm8M5TVU4"
+order_handler = "CUj7KeoY8cX8N5FiCsX3iVaYHKvFaJCdB8rhifpYmDzG"
 
 [programs.localnet]
-data_registry = "EitDizrAP7BH192FP4GivCWZrdbUjVoWJRUfQRRHbGq3"
-order_handler = "BmcLrSxve59aReXFqCfZ6gWSfzmZyDPVLAKNX8sAmY9F"
+data_registry = "Dp6VU1JPpAMhzrQfXtjxQFs2CMaMRX4f53sNm8M5TVU4"
+order_handler = "CUj7KeoY8cX8N5FiCsX3iVaYHKvFaJCdB8rhifpYmDzG"
 
 [registry]
 url = "https://api.apr.dev"

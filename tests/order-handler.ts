@@ -124,6 +124,7 @@ async function createRequestedJob(
     startDayUtc: new anchor.BN(0),
     filterQuery: "age BETWEEN 20 AND 40",
     resultEncryptionKey: "test-encryption-key-123456789",
+    algorithmId: "cohort_means",
   };
 
   await program.methods

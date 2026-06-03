@@ -9,6 +9,8 @@ pub struct JobParams {
     pub start_day_utc: i64,
     pub filter_query: String,
     pub result_encryption_key: String,
+    /// Algorithm the TEE should run during compute. Empty = TEE default.
+    pub algorithm_id: String,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]

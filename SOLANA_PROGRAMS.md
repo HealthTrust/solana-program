@@ -598,6 +598,7 @@ COMPLETED
 | `max_participants` | `u32` | Maximum number of data providers to include |
 | `start_day_utc` | `i64` | Fixed window start (Unix seconds) |
 | `filter_query` | `String` | Optional cohort filter string (max 128 bytes) |
+| `algorithm_id` | `String` | TEE algorithm to run during compute (max 32 bytes; empty = TEE default) |
 | `escrowed` | `u64` | Lamports deposited in vault |
 | `effective_participants_scaled` | `u64` | Σq_i × 1e18, from ROFL preflight |
 | `quality_tier` | `u8` | Overall quality tier from preflight |
@@ -712,6 +713,7 @@ No escrow payment at this stage.
 | `max_participants` | `u32` | > 0 | Maximum number of data providers |
 | `start_day_utc` | `i64` | — | Fixed window start time |
 | `filter_query` | `String` | max 128 bytes | Optional cohort filter expression |
+| `algorithm_id` | `String` | max 32 bytes | TEE algorithm to run (e.g. `"cohort_means"`); empty = TEE default |
 
 **Returns** (read from event): `job_id` — the assigned job ID.
 

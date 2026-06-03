@@ -11,7 +11,7 @@ pub mod state;
 use contexts::*;
 use params::{JobParams, PreflightResultParams};
 
-declare_id!("BmcLrSxve59aReXFqCfZ6gWSfzmZyDPVLAKNX8sAmY9F");
+declare_id!("CUj7KeoY8cX8N5FiCsX3iVaYHKvFaJCdB8rhifpYmDzG");
 
 #[program]
 pub mod order_handler {

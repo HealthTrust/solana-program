@@ -397,6 +397,8 @@ function buildJobParams(options) {
     maxParticipants: Number(requireOption(options, "max-participants")),
     startDayUtc: bn64(requireOption(options, "start-day-utc")),
     filterQuery: String(requireOption(options, "filter-query")),
+    resultEncryptionKey: String(options["result-encryption-key"] ?? ""),
+    algorithmId: String(options["algorithm-id"] ?? ""),
   };
 }
 

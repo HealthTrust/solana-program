@@ -1,7 +1,9 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
-use crate::constants::{MAX_ALGORITHM_ID_LEN, MAX_JOB_DATA_TYPE_LEN, MAX_JOB_DATA_TYPES};
+use crate::constants::{
+    MAX_ALGORITHM_ID_LEN, MAX_ALGORITHM_PARAMS_LEN, MAX_JOB_DATA_TYPE_LEN, MAX_JOB_DATA_TYPES,
+};
 use crate::contexts::{CancelJob, ConfirmJobAndPay, RequestJob, SweepVaultDust};
 use crate::errors::OrderError;
 use crate::events::{JobCancelled, JobConfirmed, JobRequested, VaultDustSwept};
@@ -32,6 +34,13 @@ pub fn request_job(ctx: Context<RequestJob>, params: JobParams) -> Result<()> {
         params.algorithm_id.len() <= MAX_ALGORITHM_ID_LEN,
         OrderError::AlgorithmIdTooLong
     );
+    // algorithm_params is optional (empty = algorithm defaults); only bound its
+    // length. Contents are validated inside the TEE against the algorithm's
+    // params schema, not on-chain.
+    require!(
+        params.algorithm_params.len() <= MAX_ALGORITHM_PARAMS_LEN,
+        OrderError::AlgorithmParamsTooLong
+    );
 
     let order_config = &mut ctx.accounts.order_config;
     let job_id = order_config.next_job_id;
@@ -53,6 +62,7 @@ pub fn request_job(ctx: Context<RequestJob>, params: JobParams) -> Result<()> {
     job.filter_query = params.filter_query.clone();
     job.result_encryption_key = params.result_encryption_key.clone();
     job.algorithm_id = params.algorithm_id.clone();
+    job.algorithm_params = params.algorithm_params.clone();
     job.escrowed = 0;
     job.effective_participants_scaled = 0;
     job.quality_tier = 0;

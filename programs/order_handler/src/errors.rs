@@ -20,6 +20,8 @@ pub enum OrderError {
     TooManyDataTypes,
     #[msg("algorithm_id exceeds the 32-byte limit")]
     AlgorithmIdTooLong,
+    #[msg("algorithm_params exceeds the 512-byte limit")]
+    AlgorithmParamsTooLong,
     #[msg("max_participants must be greater than zero")]
     InvalidMaxParticipants,
     #[msg("Too many selected participants (max 50)")]

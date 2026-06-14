@@ -11,6 +11,9 @@ pub struct JobParams {
     pub result_encryption_key: String,
     /// Algorithm the TEE should run during compute. Empty = TEE default.
     pub algorithm_id: String,
+    /// Optional params blob (JSON object, UTF-8) the TEE passes to the selected
+    /// algorithm's Validate/Run. Empty = use the algorithm's defaults.
+    pub algorithm_params: Vec<u8>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]

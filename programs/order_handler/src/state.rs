@@ -53,6 +53,8 @@ pub struct Job {
     pub result_encryption_key: String,
     #[max_len(32)]
     pub algorithm_id: String,
+    #[max_len(512)]
+    pub algorithm_params: Vec<u8>,
     pub escrowed: u64,
     pub effective_participants_scaled: u64,
     pub quality_tier: u8,

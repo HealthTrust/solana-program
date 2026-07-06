@@ -111,7 +111,7 @@ function parseArgs(argv) {
 
     const key = token.slice(2);
     const next = rest[index + 1];
-    if (!next || next.startsWith("--")) {
+    if (next === undefined || next.startsWith("--")) {
       if (booleanOptions.has(key)) {
         options[key] = true;
         continue;
@@ -396,9 +396,10 @@ function buildJobParams(options) {
     dataTypes: parseCsvStrings(requireOption(options, "data-types")),
     maxParticipants: Number(requireOption(options, "max-participants")),
     startDayUtc: bn64(requireOption(options, "start-day-utc")),
-    filterQuery: String(requireOption(options, "filter-query")),
+    filterQuery: String(options["filter-query"] ?? ""),
     resultEncryptionKey: String(options["result-encryption-key"] ?? ""),
     algorithmId: String(options["algorithm-id"] ?? ""),
+    algorithmParams: Buffer.from(String(options["algorithm-params"] ?? ""), "utf8"),
   };
 }
 

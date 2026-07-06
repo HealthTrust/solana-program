@@ -82,7 +82,10 @@ pub mod data_registry {
         instructions::update_upload_unit(ctx, meta_id, unit_index, feat_cid)
     }
 
-    pub fn close_data_entry_meta(ctx: Context<CloseDataEntryMeta>, meta_id: u64) -> Result<()> {
+    pub fn close_data_entry_meta<'info>(
+        ctx: Context<'_, '_, 'info, 'info, CloseDataEntryMeta<'info>>,
+        meta_id: u64,
+    ) -> Result<()> {
         instructions::close_data_entry_meta(ctx, meta_id)
     }
 

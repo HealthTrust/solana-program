@@ -26,4 +26,8 @@ pub enum RegistryError {
     InvalidOwner,
     #[msg("TEE authority cannot be the zero address")]
     InvalidAuthority,
+    #[msg("All upload units must be closed before the meta can close")]
+    UnitsStillOpen,
+    #[msg("Remaining account is not an upload unit of this meta")]
+    WrongUnitAccount,
 }

@@ -40,7 +40,13 @@ pub struct DataEntryMeta {
     pub data_types: Vec<String>,
 
     pub total_duration: u64,
+    /// Total units ever appended — drives the next unit PDA seed. Never
+    /// decremented, so closed unit indexes can never be re-created.
     pub unit_count: u32,
+    /// Units currently open. Decremented by close_upload_unit and the
+    /// close_data_entry_meta cascade; the meta can only close at zero, so a
+    /// withdrawal can span many transactions without orphaning units.
+    pub open_unit_count: u32,
     pub date_of_creation: i64,
     pub date_of_modification: i64,
     pub bump: u8,

@@ -82,6 +82,7 @@ pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams)
     meta.data_types = params.data_types.clone();
     meta.total_duration = total_duration;
     meta.unit_count = 1;
+    meta.open_unit_count = 1;
     meta.date_of_creation = clock.unix_timestamp;
     meta.date_of_modification = clock.unix_timestamp;
     meta.bump = ctx.bumps.data_entry_meta;
@@ -177,6 +178,10 @@ pub fn register_raw_upload(
         .unit_count
         .checked_add(1)
         .ok_or(RegistryError::Overflow)?;
+    meta.open_unit_count = meta
+        .open_unit_count
+        .checked_add(1)
+        .ok_or(RegistryError::Overflow)?;
     meta.total_duration = meta
         .total_duration
         .checked_add(added_duration)
@@ -229,8 +234,44 @@ pub fn update_upload_unit(
     Ok(())
 }
 
-pub fn close_data_entry_meta(ctx: Context<CloseDataEntryMeta>, _meta_id: u64) -> Result<()> {
+/// Withdraw a dataset (issue #4): the meta can only close once every one of
+/// its upload units is closed, so withdrawn data can never linger as orphaned
+/// on-chain units.
+///
+/// Unit PDAs of this meta may be passed as remaining accounts (writable) and
+/// are cascade-closed here — rent refunded to the provider, UploadUnitClosed
+/// emitted per unit, `open_unit_count` decremented. When the meta has more
+/// units than fit one transaction (~25 account keys), pre-close batches with
+/// close_upload_unit across as many transactions as needed; the final call
+/// then closes the meta. If any unit is still open, the close is refused
+/// (UnitsStillOpen) — completeness is enforced by the counter, not by the
+/// caller's account list.
+pub fn close_data_entry_meta<'info>(
+    ctx: Context<'_, '_, 'info, 'info, CloseDataEntryMeta<'info>>,
+    meta_id: u64,
+) -> Result<()> {
     require!(!ctx.accounts.registry_state.paused, RegistryError::Paused);
+
+    let provider_info = ctx.accounts.provider.to_account_info();
+    let mut open = ctx.accounts.data_entry_meta.open_unit_count;
+
+    for acc_info in ctx.remaining_accounts.iter() {
+        // Deserialization enforces program ownership + the UploadUnit
+        // discriminator; meta_id enforces it is THIS meta's unit. Duplicates
+        // can't slip through — a closed account fails deserialization.
+        let unit: Account<'info, UploadUnit> = Account::try_from(acc_info)?;
+        require!(unit.meta_id == meta_id, RegistryError::WrongUnitAccount);
+
+        emit!(UploadUnitClosed {
+            meta_id,
+            unit_index: unit.unit_index,
+        });
+        unit.close(provider_info.clone())?;
+        open = open.checked_sub(1).ok_or(RegistryError::Overflow)?;
+    }
+
+    require!(open == 0, RegistryError::UnitsStillOpen);
+    ctx.accounts.data_entry_meta.open_unit_count = 0;
 
     emit!(DataEntryDeleted {
         meta_id: ctx.accounts.data_entry_meta.meta_id,
@@ -246,6 +287,12 @@ pub fn close_upload_unit(
     _meta_id: u64,
     _unit_index: u32,
 ) -> Result<()> {
+    let meta = &mut ctx.accounts.data_entry_meta;
+    meta.open_unit_count = meta
+        .open_unit_count
+        .checked_sub(1)
+        .ok_or(RegistryError::Overflow)?;
+
     emit!(UploadUnitClosed {
         meta_id: ctx.accounts.upload_unit.meta_id,
         unit_index: ctx.accounts.upload_unit.unit_index,

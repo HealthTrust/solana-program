@@ -489,7 +489,7 @@ describe("data_registry migration parity", () => {
       .rpc();
   });
 
-  it("closes the metadata account while leaving existing upload units fetchable", async () => {
+  it("cascade-closes the meta together with all of its upload units", async () => {
     const created = await createMetaEntry(providerOne, registryState);
 
     // Wrong owner cannot close the meta account.
@@ -507,7 +507,45 @@ describe("data_registry migration parity", () => {
       "NotOwner"
     );
 
-    // Correct owner closes the meta account.
+    // Withdrawal must account for every unit: closing while units are still
+    // open is refused (this was the issue-#4 orphaning bug).
+    await expectAnchorError(
+      () =>
+        program.methods
+          .closeDataEntryMeta(created.metaId)
+          .accountsStrict({
+            registryState,
+            dataEntryMeta: created.dataEntryMeta,
+            provider: providerOne.publicKey,
+          })
+          .signers([providerOne])
+          .rpc(),
+      "UnitsStillOpen"
+    );
+
+    // Another meta's unit cannot be swept into this meta's cascade.
+    const foreign = await createMetaEntry(providerTwo, registryState);
+    await expectAnchorError(
+      () =>
+        program.methods
+          .closeDataEntryMeta(created.metaId)
+          .accountsStrict({
+            registryState,
+            dataEntryMeta: created.dataEntryMeta,
+            provider: providerOne.publicKey,
+          })
+          .remainingAccounts([
+            { pubkey: foreign.uploadUnit, isSigner: false, isWritable: true },
+          ])
+          .signers([providerOne])
+          .rpc(),
+      "WrongUnitAccount"
+    );
+
+    // Correct owner closes meta + unit atomically.
+    const providerBalanceBefore = await provider.connection.getBalance(
+      providerOne.publicKey
+    );
     await program.methods
       .closeDataEntryMeta(created.metaId)
       .accountsStrict({
@@ -515,16 +553,84 @@ describe("data_registry migration parity", () => {
         dataEntryMeta: created.dataEntryMeta,
         provider: providerOne.publicKey,
       })
+      .remainingAccounts([
+        { pubkey: created.uploadUnit, isSigner: false, isWritable: true },
+      ])
       .signers([providerOne])
       .rpc();
 
-    // Meta should be gone, but upload unit account remains readable.
+    // BOTH accounts are gone and rent came back to the provider.
     const closedMeta = await program.account.dataEntryMeta.fetchNullable(
       created.dataEntryMeta
     );
-    const originalUnit = await program.account.uploadUnit.fetch(created.uploadUnit);
+    const closedUnit = await program.account.uploadUnit.fetchNullable(
+      created.uploadUnit
+    );
+    const providerBalanceAfter = await provider.connection.getBalance(
+      providerOne.publicKey
+    );
 
     expect(closedMeta).to.equal(null);
-    expect(originalUnit.rawCid).to.equal(created.params.rawCid);
+    expect(closedUnit).to.equal(null);
+    expect(providerBalanceAfter).to.be.greaterThan(providerBalanceBefore);
+  });
+
+  it("cascade close accepts units already closed via close_upload_unit", async () => {
+    const created = await createMetaEntry(providerOne, registryState);
+
+    // Append a second unit, then close it individually (the batching path
+    // for metas with more units than fit one transaction).
+    const secondUnit = deriveUnitPda(created.metaId, 1);
+    await program.methods
+      .registerRawUpload(
+        created.metaId,
+        "QmCascadeAppend111111111111111111111111111111111111",
+        new anchor.BN(1_000),
+        new anchor.BN(2_000)
+      )
+      .accountsStrict({
+        registryState,
+        dataEntryMeta: created.dataEntryMeta,
+        uploadUnit: secondUnit,
+        provider: providerOne.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([providerOne])
+      .rpc();
+
+    await program.methods
+      .closeUploadUnit(created.metaId, 1)
+      .accountsStrict({
+        dataEntryMeta: created.dataEntryMeta,
+        uploadUnit: secondUnit,
+        provider: providerOne.publicKey,
+      })
+      .signers([providerOne])
+      .rpc();
+
+    // The individual close decremented the open-unit counter.
+    const metaAfterUnitClose = await program.account.dataEntryMeta.fetch(
+      created.dataEntryMeta
+    );
+    expect(metaAfterUnitClose.openUnitCount).to.equal(1);
+
+    // Final cascade closes the last live unit and then the meta — the
+    // pre-closed unit is simply absent from the account list.
+    await program.methods
+      .closeDataEntryMeta(created.metaId)
+      .accountsStrict({
+        registryState,
+        dataEntryMeta: created.dataEntryMeta,
+        provider: providerOne.publicKey,
+      })
+      .remainingAccounts([
+        { pubkey: created.uploadUnit, isSigner: false, isWritable: true },
+      ])
+      .signers([providerOne])
+      .rpc();
+
+    expect(await program.account.dataEntryMeta.fetchNullable(created.dataEntryMeta)).to.equal(null);
+    expect(await program.account.uploadUnit.fetchNullable(created.uploadUnit)).to.equal(null);
+    expect(await program.account.uploadUnit.fetchNullable(secondUnit)).to.equal(null);
   });
 });

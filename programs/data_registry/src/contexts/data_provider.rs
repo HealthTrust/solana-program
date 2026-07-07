@@ -122,6 +122,7 @@ pub struct CloseDataEntryMeta<'info> {
 #[instruction(meta_id: u64, unit_index: u32)]
 pub struct CloseUploadUnit<'info> {
     #[account(
+        mut,
         seeds = [b"meta", meta_id.to_le_bytes().as_ref()],
         bump = data_entry_meta.bump,
         constraint = data_entry_meta.owner == provider.key() @ RegistryError::NotOwner,

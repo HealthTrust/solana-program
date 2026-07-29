@@ -327,12 +327,27 @@ describe("data_registry migration parity", () => {
   it("lets the configured TEE authority attach feat CIDs to upload units", async () => {
     const created = await createMetaEntry(providerOne, registryState);
 
-    // Only tee_authority can enrich a raw upload with feature CID.
+    // Only tee_authority can enrich a raw upload with feature CID, carrying the
+    // event-only quality digest (QUALITY_DIGEST_DESIGN.md §4/§5).
     await program.methods
       .updateUploadUnit(
         created.metaId,
         0,
-        "bafybeigdyrzt4processedfeaturecid0000000000000000000000"
+        "bafybeigdyrzt4processedfeaturecid0000000000000000000000",
+        [
+          {
+            signal: "heart_rate",
+            validSamples: 720,
+            totalSamples: 800,
+            outlierCount: 80,
+            longestGapSeconds: 21600,
+            firstTs: new anchor.BN(1_700_000_000),
+            lastTs: new anchor.BN(1_700_086_400),
+          },
+        ],
+        "1",
+        "1.0.0",
+        1
       )
       .accountsStrict({
         registryState,
@@ -452,7 +467,11 @@ describe("data_registry migration parity", () => {
           .updateUploadUnit(
             created.metaId,
             0,
-            "bafybeipausedfeaturecid00000000000000000000000000000"
+            "bafybeipausedfeaturecid00000000000000000000000000000",
+            [],
+            "1",
+            "1.0.0",
+            1
           )
           .accountsStrict({
             registryState,

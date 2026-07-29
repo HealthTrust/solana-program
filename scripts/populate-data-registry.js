@@ -12,6 +12,11 @@ const DEFAULT_PROGRAM_ID = "3zmhW1fxXXGKCn31Uz8BaZ34gmNRGgAG6LFk1P6gWkDT";
 const DEFAULT_RPC_URL = "http://127.0.0.1:8899";
 const DEFAULT_PROVIDER_TARGET_LAMPORTS = 50_000_000;
 
+// Quality-digest args appended to update_upload_unit (QUALITY_DIGEST_DESIGN.md
+// §4/§5). Population attaches feat CIDs without a real digest, so it sends an
+// empty signal set with the pinned version metadata.
+const EMPTY_QUALITY_ARGS = [[], "1", "1.0.0", 1];
+
 function log(message) {
   console.log(`[populate-data-registry] ${message}`);
 }
@@ -366,7 +371,7 @@ async function uploadEntry(program, provider, registryState, teeSigner, rawEntry
 
     log(`Attaching feat CID to meta ${metaId.toString()} unit 0`);
     await program.methods
-      .updateUploadUnit(metaId, 0, entry.initialFeatCid)
+      .updateUploadUnit(metaId, 0, entry.initialFeatCid, ...EMPTY_QUALITY_ARGS)
       .accountsStrict({
         registryState,
         uploadUnit: initialUploadUnit,
@@ -406,7 +411,7 @@ async function uploadEntry(program, provider, registryState, teeSigner, rawEntry
 
       log(`Attaching feat CID to meta ${metaId.toString()} unit ${unitIndex}`);
       await program.methods
-        .updateUploadUnit(metaId, unitIndex, upload.featCid)
+        .updateUploadUnit(metaId, unitIndex, upload.featCid, ...EMPTY_QUALITY_ARGS)
         .accountsStrict({
           registryState,
           uploadUnit,

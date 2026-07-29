@@ -650,7 +650,21 @@ describeDevnet("devnet deployed contracts full flow", () => {
       .updateUploadUnit(
         metaId,
         0,
-        "bafybeidevnetfeaturecid111111111111111111111111111111"
+        "bafybeidevnetfeaturecid111111111111111111111111111111",
+        [
+          {
+            signal: "heart_rate",
+            validSamples: 100,
+            totalSamples: 100,
+            outlierCount: 0,
+            longestGapSeconds: 3600,
+            firstTs: new anchor.BN(1_700_000_000),
+            lastTs: new anchor.BN(1_700_086_400),
+          },
+        ],
+        "1",
+        "1.0.0",
+        1
       )
       .accountsStrict({
         registryState,

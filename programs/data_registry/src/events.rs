@@ -53,6 +53,21 @@ pub struct DataStored {
     pub added_duration: u64,
 }
 
+/// Per-signal quality aggregate inputs, computed by the TEE at clean time and
+/// carried on the `update_upload_unit` transaction. Event-only — NOT stored in
+/// account state (see QUALITY_DIGEST_DESIGN.md §4/§5). The read-time scorer
+/// applies `numDays` + the blend to these inputs; only the inputs travel here.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct SignalQuality {
+    pub signal: String,
+    pub valid_samples: u32,
+    pub total_samples: u32,
+    pub outlier_count: u32,
+    pub longest_gap_seconds: u32,
+    pub first_ts: i64,
+    pub last_ts: i64,
+}
+
 #[event]
 pub struct DataEntryVersionUpdated {
     pub meta_id: u64,
@@ -60,6 +75,11 @@ pub struct DataEntryVersionUpdated {
     pub feat_cid: String,
     pub updater: Pubkey,
     pub timestamp: i64,
+    // Quality digest (appended; legacy events lack these — indexer dual-decodes).
+    pub quality: Vec<SignalQuality>,
+    pub signal_table_version: String,
+    pub extraction_version: String,
+    pub digest_schema_version: u8,
 }
 
 #[event]

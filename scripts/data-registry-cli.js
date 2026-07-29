@@ -13,6 +13,11 @@ const DEFAULT_PROGRAM_ID = "3zmhW1fxXXGKCn31Uz8BaZ34gmNRGgAG6LFk1P6gWkDT";
 const DEFAULT_RPC_URL = "http://127.0.0.1:8899";
 const DEFAULT_PROVIDER_TARGET_LAMPORTS = 50_000_000;
 
+// Quality-digest args appended to update_upload_unit (QUALITY_DIGEST_DESIGN.md
+// §4/§5). This CLI attaches feat CIDs without producing a real digest, so it
+// sends an empty signal set with the pinned version metadata.
+const EMPTY_QUALITY_ARGS = [[], "1", "1.0.0", 1];
+
 function fail(message) {
   console.error(`[data-registry-cli] ERROR: ${message}`);
   process.exit(1);
@@ -466,7 +471,7 @@ async function commandUploadMeta(program, provider, options) {
     }
 
     await program.methods
-      .updateUploadUnit(metaId, 0, String(featCid))
+      .updateUploadUnit(metaId, 0, String(featCid), ...EMPTY_QUALITY_ARGS)
       .accountsStrict({
         registryState,
         uploadUnit: unitAddress,
@@ -530,7 +535,7 @@ async function commandAppendUpload(program, provider, options) {
     }
 
     await program.methods
-      .updateUploadUnit(metaId, unitIndex, String(featCid))
+      .updateUploadUnit(metaId, unitIndex, String(featCid), ...EMPTY_QUALITY_ARGS)
       .accountsStrict({
         registryState,
         uploadUnit: unitAddress,
@@ -571,7 +576,12 @@ async function commandUpdateFeat(program, provider, options) {
   const uploadUnit = deriveUnitPda(program.programId, metaId, unitIndex);
 
   await program.methods
-    .updateUploadUnit(metaId, unitIndex, String(requireOption(options, "feat-cid")))
+    .updateUploadUnit(
+      metaId,
+      unitIndex,
+      String(requireOption(options, "feat-cid")),
+      ...EMPTY_QUALITY_ARGS
+    )
     .accountsStrict({
       registryState: registry.address,
       uploadUnit,
@@ -881,7 +891,7 @@ async function commandPopulate(program, provider, options) {
         fail("Populate payload includes featCid updates but no usable tee signer is available");
       }
       await program.methods
-        .updateUploadUnit(metaId, 0, entry.initialFeatCid)
+        .updateUploadUnit(metaId, 0, entry.initialFeatCid, ...EMPTY_QUALITY_ARGS)
         .accountsStrict({
           registryState: registry.address,
           uploadUnit: uploadUnit0,
@@ -917,7 +927,7 @@ async function commandPopulate(program, provider, options) {
           fail("Populate payload includes featCid updates but no usable tee signer is available");
         }
         await program.methods
-          .updateUploadUnit(metaId, unitIndex, appended.featCid)
+          .updateUploadUnit(metaId, unitIndex, appended.featCid, ...EMPTY_QUALITY_ARGS)
           .accountsStrict({
             registryState: registry.address,
             uploadUnit,

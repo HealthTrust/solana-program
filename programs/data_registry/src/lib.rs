@@ -78,8 +78,21 @@ pub mod data_registry {
         meta_id: u64,
         unit_index: u32,
         feat_cid: String,
+        quality: Vec<events::SignalQuality>,
+        signal_table_version: String,
+        extraction_version: String,
+        digest_schema_version: u8,
     ) -> Result<()> {
-        instructions::update_upload_unit(ctx, meta_id, unit_index, feat_cid)
+        instructions::update_upload_unit(
+            ctx,
+            meta_id,
+            unit_index,
+            feat_cid,
+            quality,
+            signal_table_version,
+            extraction_version,
+            digest_schema_version,
+        )
     }
 
     pub fn close_data_entry_meta<'info>(

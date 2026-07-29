@@ -1,13 +1,16 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{MAX_CHRONIC_CONDITIONS, MAX_DATA_TYPE_LEN, MAX_DATA_TYPES};
+use crate::constants::{
+    MAX_CHRONIC_CONDITIONS, MAX_DATA_TYPE_LEN, MAX_DATA_TYPES, MAX_DIGEST_VERSION_LEN,
+    MAX_QUALITY_SIGNALS, MAX_SIGNAL_NAME_LEN,
+};
 use crate::contexts::{
     CloseDataEntryMeta, CloseUploadUnit, RegisterRawUpload, UpdateUploadUnit, UploadNewMeta,
 };
 use crate::errors::RegistryError;
 use crate::events::{
     DataEntryDeleted, DataEntryVersionUpdated, DataStored, MetaAttributes, MetaDeviceInfo,
-    MetaEntryCreated, UploadUnitClosed, UploadUnitCreated,
+    MetaEntryCreated, SignalQuality, UploadUnitClosed, UploadUnitCreated,
 };
 use crate::params::UploadNewMetaParams;
 use crate::state::UploadUnit;
@@ -216,9 +219,42 @@ pub fn update_upload_unit(
     _meta_id: u64,
     _unit_index: u32,
     feat_cid: String,
+    quality: Vec<SignalQuality>,
+    signal_table_version: String,
+    extraction_version: String,
+    digest_schema_version: u8,
 ) -> Result<()> {
     require!(!ctx.accounts.registry_state.paused, RegistryError::Paused);
     require!(!feat_cid.is_empty(), RegistryError::EmptyFeatCid);
+
+    // Validate the event-carried quality digest (QUALITY_DIGEST_DESIGN.md §4/§5,
+    // COHORT_IMPL_CONTRACT.md §3). The digest is emitted only; no state write.
+    require!(
+        quality.len() <= MAX_QUALITY_SIGNALS,
+        RegistryError::TooManyQualitySignals
+    );
+    require!(
+        signal_table_version.len() <= MAX_DIGEST_VERSION_LEN
+            && extraction_version.len() <= MAX_DIGEST_VERSION_LEN,
+        RegistryError::VersionStringTooLong
+    );
+    for sq in quality.iter() {
+        require!(
+            !sq.signal.is_empty() && sq.signal.len() <= MAX_SIGNAL_NAME_LEN,
+            RegistryError::InvalidSignalName
+        );
+        // Independent counts (see contract §3): do NOT require
+        // total_samples >= valid_samples.
+        require!(
+            sq.outlier_count <= sq.total_samples,
+            RegistryError::InvalidOutlierCount
+        );
+        // Only enforce ordering when both timestamps are set.
+        require!(
+            sq.first_ts == 0 || sq.last_ts == 0 || sq.first_ts <= sq.last_ts,
+            RegistryError::InvalidDigestTimestamps
+        );
+    }
 
     let clock = Clock::get()?;
     let unit = &mut ctx.accounts.upload_unit;
@@ -230,6 +266,10 @@ pub fn update_upload_unit(
         feat_cid,
         updater: ctx.accounts.tee_authority.key(),
         timestamp: clock.unix_timestamp,
+        quality,
+        signal_table_version,
+        extraction_version,
+        digest_schema_version,
     });
     Ok(())
 }

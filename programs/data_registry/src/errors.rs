@@ -30,4 +30,14 @@ pub enum RegistryError {
     UnitsStillOpen,
     #[msg("Remaining account is not an upload unit of this meta")]
     WrongUnitAccount,
+    #[msg("Too many quality signals (max 8)")]
+    TooManyQualitySignals,
+    #[msg("Signal name must be non-empty and at most 32 chars")]
+    InvalidSignalName,
+    #[msg("outlier_count must not exceed total_samples")]
+    InvalidOutlierCount,
+    #[msg("first_ts must not exceed last_ts")]
+    InvalidDigestTimestamps,
+    #[msg("Digest version string too long (max 16)")]
+    VersionStringTooLong,
 }

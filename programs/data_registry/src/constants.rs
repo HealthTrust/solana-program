@@ -1,4 +1,4 @@
-pub const MAX_DATA_TYPES: usize = 8;
+pub const MAX_DATA_TYPES: usize = 18;
 pub const MAX_DATA_TYPE_LEN: usize = 32;
 pub const MAX_CHRONIC_CONDITIONS: usize = 16;
 

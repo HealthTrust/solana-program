@@ -224,21 +224,17 @@ pub fn register_raw_upload(
     Ok(())
 }
 
-pub fn update_upload_unit(
-    ctx: Context<UpdateUploadUnit>,
-    _meta_id: u64,
-    _unit_index: u32,
-    feat_cid: String,
-    quality: Vec<SignalQuality>,
-    signal_table_version: String,
-    extraction_version: String,
-    digest_schema_version: u8,
+/// Validates the event-carried quality digest (QUALITY_DIGEST_DESIGN.md §4/§5,
+/// COHORT_IMPL_CONTRACT.md §3). The digest is emitted only; no state write, so
+/// its ceiling is the transaction size limit rather than account space.
+///
+/// Kept as a free function so the cap boundary is unit-testable without a
+/// validator.
+pub fn validate_quality_digest(
+    quality: &[SignalQuality],
+    signal_table_version: &str,
+    extraction_version: &str,
 ) -> Result<()> {
-    require!(!ctx.accounts.registry_state.paused, RegistryError::Paused);
-    require!(!feat_cid.is_empty(), RegistryError::EmptyFeatCid);
-
-    // Validate the event-carried quality digest (QUALITY_DIGEST_DESIGN.md §4/§5,
-    // COHORT_IMPL_CONTRACT.md §3). The digest is emitted only; no state write.
     require!(
         quality.len() <= MAX_QUALITY_SIGNALS,
         RegistryError::TooManyQualitySignals
@@ -265,6 +261,23 @@ pub fn update_upload_unit(
             RegistryError::InvalidDigestTimestamps
         );
     }
+    Ok(())
+}
+
+pub fn update_upload_unit(
+    ctx: Context<UpdateUploadUnit>,
+    _meta_id: u64,
+    _unit_index: u32,
+    feat_cid: String,
+    quality: Vec<SignalQuality>,
+    signal_table_version: String,
+    extraction_version: String,
+    digest_schema_version: u8,
+) -> Result<()> {
+    require!(!ctx.accounts.registry_state.paused, RegistryError::Paused);
+    require!(!feat_cid.is_empty(), RegistryError::EmptyFeatCid);
+
+    validate_quality_digest(&quality, &signal_table_version, &extraction_version)?;
 
     let clock = Clock::get()?;
     let unit = &mut ctx.accounts.upload_unit;
@@ -450,6 +463,180 @@ mod tests {
             DataEntryMeta::INIT_SPACE,
             fixed + data_types_space,
             "DataEntryMeta::INIT_SPACE must budget {MAX_DATA_TYPES} data types"
+        );
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+
+    /// Explicit `u32` conversion. Under the `idl-build` feature `serde_json` is
+    /// in scope and a bare `.into()` becomes ambiguous, so pin the target type.
+    fn expected_code(err: RegistryError) -> u32 {
+        err.into()
+    }
+
+    fn error_code(err: anchor_lang::error::Error) -> u32 {
+        match err {
+            anchor_lang::error::Error::AnchorError(inner) => inner.error_code_number,
+            other => panic!("expected an AnchorError, got {other:?}"),
+        }
+    }
+
+    fn signal(name: &str) -> SignalQuality {
+        SignalQuality {
+            signal: name.to_string(),
+            valid_samples: 100,
+            total_samples: 120,
+            outlier_count: 5,
+            longest_gap_seconds: 60,
+            first_ts: 1_713_916_800,
+            last_ts: 1_714_003_200,
+        }
+    }
+
+    fn signals(n: usize) -> Vec<SignalQuality> {
+        (0..n).map(|i| signal(&format!("signal_{i}"))).collect()
+    }
+
+    fn validate(quality: &[SignalQuality]) -> Result<()> {
+        validate_quality_digest(quality, "v1", "v1")
+    }
+
+    #[test]
+    fn cap_is_eighteen() {
+        assert_eq!(MAX_QUALITY_SIGNALS, 18);
+    }
+
+    #[test]
+    fn accepts_up_to_the_cap() {
+        for n in 0..=MAX_QUALITY_SIGNALS {
+            assert!(validate(&signals(n)).is_ok(), "{n} signals should pass");
+        }
+    }
+
+    #[test]
+    fn rejects_one_over_the_cap() {
+        let err = validate(&signals(MAX_QUALITY_SIGNALS + 1))
+            .expect_err("19 signals must be rejected");
+        assert_eq!(
+            error_code(err),
+            expected_code(RegistryError::TooManyQualitySignals)
+        );
+    }
+
+    #[test]
+    fn still_validates_each_entry() {
+        assert_eq!(
+            error_code(validate(&[signal("")]).unwrap_err()),
+            expected_code(RegistryError::InvalidSignalName)
+        );
+
+        let long_name = "s".repeat(MAX_SIGNAL_NAME_LEN + 1);
+        assert_eq!(
+            error_code(validate(&[signal(&long_name)]).unwrap_err()),
+            expected_code(RegistryError::InvalidSignalName)
+        );
+
+        let mut bad_outliers = signal("heart_rate");
+        bad_outliers.outlier_count = bad_outliers.total_samples + 1;
+        assert_eq!(
+            error_code(validate(&[bad_outliers]).unwrap_err()),
+            expected_code(RegistryError::InvalidOutlierCount)
+        );
+
+        let mut reversed = signal("heart_rate");
+        reversed.first_ts = 200;
+        reversed.last_ts = 100;
+        assert_eq!(
+            error_code(validate(&[reversed]).unwrap_err()),
+            expected_code(RegistryError::InvalidDigestTimestamps)
+        );
+
+        let too_long_version = "v".repeat(MAX_DIGEST_VERSION_LEN + 1);
+        assert_eq!(
+            error_code(
+                validate_quality_digest(&signals(1), &too_long_version, "v1").unwrap_err()
+            ),
+            expected_code(RegistryError::VersionStringTooLong)
+        );
+    }
+
+    /// The 18 canonical metric names the vocabulary is growing to. Kept here
+    /// only to size the worst realistic digest.
+    const CANONICAL_SIGNALS: [&str; 18] = [
+        "heart_rate",
+        "sleep",
+        "steps",
+        "glucose",
+        "calories_burned",
+        "blood_pressure",
+        "spo2",
+        "ecg",
+        "respiration_rate",
+        "temperature",
+        "hydration",
+        "stress",
+        "hrv",
+        "vo2max",
+        "body_fat",
+        "weight_kg",
+        "active_minutes",
+        "floors_climbed",
+    ];
+
+    /// The digest rides in instruction data, so unlike `data_types` it is
+    /// bounded by the 1232-byte transaction limit and NOT by account space.
+    ///
+    /// This pins down the real ceiling, which is tighter than the cap:
+    /// `MAX_QUALITY_SIGNALS` is NOT reachable at `MAX_SIGNAL_NAME_LEN`. A full
+    /// 18 signals only fits because the canonical names are short (~9 chars
+    /// average). Anything that lengthens those names eats the headroom, so this
+    /// test fails loudly rather than producing oversized transactions at
+    /// runtime.
+    #[test]
+    fn serialized_digest_fits_in_a_transaction() {
+        // Borsh: 4-byte Vec prefix + per signal (4-byte name prefix + name
+        // bytes + four u32 + two i64 = name + 32).
+        let digest_bytes = |names: &[&str]| -> usize {
+            4 + names.iter().map(|n| 4 + n.len() + 32).sum::<usize>()
+        };
+
+        // Everything in the transaction that is not the digest: 1 signature
+        // (65) + header (3) + 4 account keys (129) + blockhash (32) +
+        // instruction framing (8) + discriminator (8) + meta_id (8) +
+        // unit_index (4) + feat_cid (4 + 59) + two version strings (2 * 20) +
+        // schema version (1).
+        const NON_DIGEST_BYTES: usize = 65 + 3 + 129 + 32 + 8 + 8 + 8 + 4 + 63 + 40 + 1;
+        const TX_LIMIT: usize = 1232;
+
+        // The cap is NOT reachable at maximum name length.
+        let max_name = "s".repeat(MAX_SIGNAL_NAME_LEN);
+        let worst_names = vec![max_name.as_str(); MAX_QUALITY_SIGNALS];
+        let worst = NON_DIGEST_BYTES + digest_bytes(&worst_names);
+        assert!(
+            worst > TX_LIMIT,
+            "expected {MAX_QUALITY_SIGNALS} signals at {MAX_SIGNAL_NAME_LEN} bytes \
+             ({worst}) to exceed the {TX_LIMIT}-byte transaction limit; if this now \
+             fits, the warning on MAX_QUALITY_SIGNALS is stale"
+        );
+
+        // The actual vocabulary does fit, but only just.
+        assert_eq!(CANONICAL_SIGNALS.len(), MAX_QUALITY_SIGNALS);
+        let realistic = NON_DIGEST_BYTES + digest_bytes(&CANONICAL_SIGNALS);
+        assert!(
+            realistic <= TX_LIMIT,
+            "the 18 canonical signals must fit in one transaction, got {realistic} bytes"
+        );
+
+        // Headroom is thin enough to be worth knowing about: if a future rename
+        // pushes the digest over, this fires before anything hits devnet.
+        let headroom = TX_LIMIT - realistic;
+        assert!(
+            headroom < 128,
+            "headroom grew to {headroom} bytes - re-check whether the transaction-size \
+             warning on MAX_QUALITY_SIGNALS still applies"
         );
     }
 }

@@ -36,7 +36,7 @@ pub struct DataEntryMeta {
     #[max_len(16)]
     pub chronic_conditions: Vec<u8>,
 
-    #[max_len(8, 32)]
+    #[max_len(18, 32)]
     pub data_types: Vec<String>,
 
     pub total_duration: u64,

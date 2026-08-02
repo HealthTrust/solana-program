@@ -35,21 +35,31 @@ fn initialize_upload_unit(
     unit.bump = bump;
 }
 
-pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams) -> Result<()> {
-    let state = &mut ctx.accounts.registry_state;
-    require!(!state.paused, RegistryError::Paused);
-    require!(!params.data_types.is_empty(), RegistryError::EmptyDataTypes);
+/// Bounds the `data_types` vector: non-empty, at most `MAX_DATA_TYPES` entries,
+/// and every entry a non-empty string of at most `MAX_DATA_TYPE_LEN` bytes.
+///
+/// Kept as a free function (rather than inline `require!`s) so the cap boundary
+/// is unit-testable without spinning up a validator — the account SPACE math in
+/// `DataEntryMeta` mirrors these same constants and must stay in lockstep.
+pub fn validate_data_types(data_types: &[String]) -> Result<()> {
+    require!(!data_types.is_empty(), RegistryError::EmptyDataTypes);
     require!(
-        params.data_types.len() <= MAX_DATA_TYPES,
+        data_types.len() <= MAX_DATA_TYPES,
         RegistryError::TooManyDataTypes
     );
     require!(
-        params
-            .data_types
+        data_types
             .iter()
             .all(|data_type| !data_type.is_empty() && data_type.len() <= MAX_DATA_TYPE_LEN),
         RegistryError::TooManyDataTypes
     );
+    Ok(())
+}
+
+pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams) -> Result<()> {
+    let state = &mut ctx.accounts.registry_state;
+    require!(!state.paused, RegistryError::Paused);
+    validate_data_types(&params.data_types)?;
     require!(
         params.chronic_conditions.len() <= MAX_CHRONIC_CONDITIONS,
         RegistryError::TooManyConditions
@@ -338,4 +348,108 @@ pub fn close_upload_unit(
         unit_index: ctx.accounts.upload_unit.unit_index,
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::DataEntryMeta;
+    use anchor_lang::Space;
+
+    fn types(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("metric_{i}")).collect()
+    }
+
+    fn error_code(err: anchor_lang::error::Error) -> u32 {
+        match err {
+            anchor_lang::error::Error::AnchorError(inner) => inner.error_code_number,
+            other => panic!("expected an AnchorError, got {other:?}"),
+        }
+    }
+
+    /// Explicit `u32` conversion. Under the `idl-build` feature `serde_json` is
+    /// in scope and a bare `.into()` becomes ambiguous, so pin the target type.
+    fn expected_code(err: RegistryError) -> u32 {
+        err.into()
+    }
+
+    #[test]
+    fn cap_is_eighteen() {
+        assert_eq!(MAX_DATA_TYPES, 18);
+        assert_eq!(MAX_DATA_TYPE_LEN, 32);
+    }
+
+    #[test]
+    fn accepts_up_to_the_cap() {
+        for n in 1..=MAX_DATA_TYPES {
+            assert!(
+                validate_data_types(&types(n)).is_ok(),
+                "{n} data types should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_one_over_the_cap() {
+        let err = validate_data_types(&types(MAX_DATA_TYPES + 1))
+            .expect_err("19 data types must be rejected");
+        assert_eq!(
+            error_code(err),
+            expected_code(RegistryError::TooManyDataTypes),
+            "over-cap vectors must fail with TooManyDataTypes"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_vector() {
+        let err = validate_data_types(&[]).expect_err("empty data_types must be rejected");
+        assert_eq!(error_code(err), expected_code(RegistryError::EmptyDataTypes));
+    }
+
+    #[test]
+    fn enforces_per_string_byte_limit() {
+        let at_limit = vec!["a".repeat(MAX_DATA_TYPE_LEN)];
+        assert!(validate_data_types(&at_limit).is_ok(), "32 bytes is allowed");
+
+        let over_limit = vec!["a".repeat(MAX_DATA_TYPE_LEN + 1)];
+        let err = validate_data_types(&over_limit).expect_err("33 bytes must be rejected");
+        assert_eq!(error_code(err), expected_code(RegistryError::TooManyDataTypes));
+
+        let empty_entry = vec![String::new()];
+        assert!(
+            validate_data_types(&empty_entry).is_err(),
+            "empty strings must be rejected"
+        );
+    }
+
+    /// Guards the classic footgun: bumping `MAX_DATA_TYPES` but forgetting the
+    /// `#[max_len(18, 32)]` on `DataEntryMeta::data_types`, which would let
+    /// validation accept 18 entries that then fail to serialize into the
+    /// account allocated at `init`.
+    #[test]
+    fn account_space_covers_the_cap() {
+        // 4-byte Vec length prefix + N * (4-byte String length prefix + bytes).
+        let data_types_space = 4 + MAX_DATA_TYPES * (4 + MAX_DATA_TYPE_LEN);
+        assert_eq!(data_types_space, 652);
+
+        let fixed = 8  // meta_id
+            + 32       // owner
+            + (4 + 32) // device_type
+            + (4 + 48) // device_model
+            + (4 + 48) // service_provider
+            + 8        // age..diet, eight u8 attributes
+            + (4 + 16) // chronic_conditions
+            + 8        // total_duration
+            + 4        // unit_count
+            + 4        // open_unit_count
+            + 8        // date_of_creation
+            + 8        // date_of_modification
+            + 1; // bump
+
+        assert_eq!(
+            DataEntryMeta::INIT_SPACE,
+            fixed + data_types_space,
+            "DataEntryMeta::INIT_SPACE must budget {MAX_DATA_TYPES} data types"
+        );
+    }
 }

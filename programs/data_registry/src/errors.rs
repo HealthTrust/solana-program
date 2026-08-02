@@ -12,7 +12,7 @@ pub enum RegistryError {
     NotTeeAuthority,
     #[msg("data_types must not be empty")]
     EmptyDataTypes,
-    #[msg("Too many data types (max 8)")]
+    #[msg("Too many data types (max 18)")]
     TooManyDataTypes,
     #[msg("Too many chronic conditions (max 16)")]
     TooManyConditions,

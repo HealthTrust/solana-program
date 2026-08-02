@@ -141,7 +141,7 @@ units, and the TEE processing them into feature CIDs.
 | `smoker` | `u8` | `0` = non-smoker, `1` = smoker |
 | `diet` | `u8` | Diet code |
 | `chronic_conditions` | `Vec<u8>` | Condition codes (max 16) |
-| `data_types` | `Vec<String>` | Data type strings in this dataset (max 8, each max 32 bytes) |
+| `data_types` | `Vec<String>` | Data type strings in this dataset (max 18, each max 32 bytes) |
 | `total_duration` | `u64` | Cumulative seconds of data across all upload units |
 | `unit_count` | `u32` | Number of `UploadUnit` PDAs under this meta |
 | `date_of_creation` | `i64` | Unix timestamp |
@@ -594,7 +594,7 @@ COMPLETED
 | `status` | `JobStatus` | Current lifecycle state (see enum below) |
 | `template_id` | `u32` | Job template ID (> 0) |
 | `num_days` | `u32` | Duration of the data window requested |
-| `data_types` | `Vec<String>` | Data type strings requested (max 8, each max 32 bytes) |
+| `data_types` | `Vec<String>` | Data type strings requested (max 18, each max 32 bytes) |
 | `max_participants` | `u32` | Maximum number of data providers to include |
 | `start_day_utc` | `i64` | Fixed window start (Unix seconds) |
 | `filter_query` | `String` | Optional cohort filter string (max 128 bytes) |
@@ -1366,7 +1366,7 @@ async function parseHistoricalEvents(programId: PublicKey, idl: any) {
 | 6002 | `NotOwner` | Caller is not the meta entry owner |
 | 6003 | `NotTeeAuthority` | Caller is not the TEE authority |
 | 6004 | `EmptyDataTypes` | data_types must not be empty |
-| 6005 | `TooManyDataTypes` | Too many data types (max 8) |
+| 6005 | `TooManyDataTypes` | Too many data types (max 18) |
 | 6006 | `TooManyConditions` | Too many chronic conditions (max 16) |
 | 6007 | `InvalidTimestampRange` | day_end_timestamp must be greater than day_start_timestamp |
 | 6008 | `EmptyFeatCid` | feat_cid must not be empty |
@@ -1385,7 +1385,7 @@ async function parseHistoricalEvents(programId: PublicKey, idl: any) {
 | 6004 | `InvalidNumDays` | num_days must be greater than zero |
 | 6005 | `InvalidTemplateId` | template_id must be greater than zero |
 | 6006 | `EmptyDataTypes` | data_types must not be empty |
-| 6007 | `TooManyDataTypes` | Too many data types (max 8) |
+| 6007 | `TooManyDataTypes` | Too many data types (max 18) |
 | 6008 | `InvalidMaxParticipants` | max_participants must be greater than zero |
 | 6009 | `TooManyParticipants` | Too many selected participants (max 50) |
 | 6010 | `InsufficientPayment` | Payment amount is less than the required final_total |

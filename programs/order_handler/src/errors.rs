@@ -16,7 +16,7 @@ pub enum OrderError {
     InvalidTemplateId,
     #[msg("data_types must not be empty")]
     EmptyDataTypes,
-    #[msg("Too many data types (max 8)")]
+    #[msg("Too many data types (max 18)")]
     TooManyDataTypes,
     #[msg("algorithm_id exceeds the 32-byte limit")]
     AlgorithmIdTooLong,

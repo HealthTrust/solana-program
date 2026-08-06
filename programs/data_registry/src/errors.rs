@@ -12,7 +12,7 @@ pub enum RegistryError {
     NotTeeAuthority,
     #[msg("data_types must not be empty")]
     EmptyDataTypes,
-    #[msg("Too many data types (max 8)")]
+    #[msg("Too many data types (max 18)")]
     TooManyDataTypes,
     #[msg("Too many chronic conditions (max 16)")]
     TooManyConditions,
@@ -30,7 +30,7 @@ pub enum RegistryError {
     UnitsStillOpen,
     #[msg("Remaining account is not an upload unit of this meta")]
     WrongUnitAccount,
-    #[msg("Too many quality signals (max 8)")]
+    #[msg("Too many quality signals (max 18)")]
     TooManyQualitySignals,
     #[msg("Signal name must be non-empty and at most 32 chars")]
     InvalidSignalName,

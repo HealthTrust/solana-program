@@ -125,6 +125,7 @@ function parseArgs(argv) {
     "help",
     "initialize-if-needed",
     "skip-feat-cids",
+    "cascade",
   ]);
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -610,6 +611,21 @@ async function commandCloseMeta(program, provider, options) {
   const metaId = Number(requireOption(options, "meta-id"));
   const metaAddress = deriveMetaPda(program.programId, metaId);
 
+  // --cascade mirrors the app's withdrawal flow: every still-open unit rides
+  // along as a remaining account so meta + units close in one transaction.
+  let remainingAccounts = [];
+  if (options.cascade) {
+    const meta = await program.account.dataEntryMeta.fetch(metaAddress);
+    const unitPdas = Array.from({ length: meta.unitCount }, (_, i) =>
+      deriveUnitPda(program.programId, metaId, i)
+    );
+    const infos = await provider.connection.getMultipleAccountsInfo(unitPdas);
+    remainingAccounts = unitPdas
+      .filter((_, i) => infos[i] !== null)
+      .map((pubkey) => ({ pubkey, isSigner: false, isWritable: true }));
+    console.log(`[data-registry-cli] cascade: ${remainingAccounts.length} open unit(s) will close with the meta`);
+  }
+
   await program.methods
     .closeDataEntryMeta(bn64(metaId))
     .accountsStrict({
@@ -617,10 +633,11 @@ async function commandCloseMeta(program, provider, options) {
       dataEntryMeta: metaAddress,
       provider: providerSigner.publicKey,
     })
+    .remainingAccounts(remainingAccounts)
     .signers(providerSigner.signers)
     .rpc();
 
-  console.log(JSON.stringify({ action: "close-meta", metaId: String(metaId), dataEntryMeta: metaAddress.toBase58() }, null, 2));
+  console.log(JSON.stringify({ action: "close-meta", cascade: Boolean(options.cascade), unitsClosed: remainingAccounts.length, metaId: String(metaId), dataEntryMeta: metaAddress.toBase58() }, null, 2));
 }
 
 async function commandCloseUnit(program, provider, options) {
@@ -670,7 +687,13 @@ function defaultArtifactDir(outputPath) {
 }
 
 function runTeeGenerator(teeBackendDir, generatorArgs) {
-  const result = spawnSync("go", ["run", "./cmd/generate-registry-cids", ...generatorArgs], {
+  // Prefer a prebuilt generator: `go run` compiles into the go-build cache,
+  // which Windows Defender flags as a false positive.
+  const prebuilt = path.join(teeBackendDir, "generate-registry-cids.exe");
+  const [cmd, baseArgs] = fs.existsSync(prebuilt)
+    ? [prebuilt, []]
+    : ["go", ["run", "./cmd/generate-registry-cids"]];
+  const result = spawnSync(cmd, [...baseArgs, ...generatorArgs], {
     cwd: teeBackendDir,
     env: process.env,
     encoding: "utf8",

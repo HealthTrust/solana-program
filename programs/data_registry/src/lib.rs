@@ -57,6 +57,14 @@ pub mod data_registry {
         instructions::upload_new_meta(ctx, params)
     }
 
+    pub fn update_meta_data_types(
+        ctx: Context<UpdateMetaDataTypes>,
+        meta_id: u64,
+        new_data_types: Vec<String>,
+    ) -> Result<()> {
+        instructions::update_meta_data_types(ctx, meta_id, new_data_types)
+    }
+
     pub fn register_raw_upload(
         ctx: Context<RegisterRawUpload>,
         meta_id: u64,

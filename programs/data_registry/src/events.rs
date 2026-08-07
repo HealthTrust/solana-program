@@ -31,6 +31,19 @@ pub struct MetaDeviceInfo {
     pub service_provider: String,
 }
 
+/// Emitted by `update_meta_data_types` (issue #44). `data_types` is the full
+/// resulting declared set — indexers should treat it as authoritative and
+/// overwrite, not merge. `added` is the delta this call contributed and is
+/// empty on an idempotent no-op call.
+#[event]
+pub struct MetaDataTypesUpdated {
+    pub meta_id: u64,
+    pub owner: Pubkey,
+    pub data_types: Vec<String>,
+    pub added: Vec<String>,
+    pub timestamp: i64,
+}
+
 #[event]
 pub struct UploadUnitCreated {
     pub meta_id: u64,

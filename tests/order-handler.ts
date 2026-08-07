@@ -125,6 +125,7 @@ async function createRequestedJob(
     filterQuery: "age BETWEEN 20 AND 40",
     resultEncryptionKey: "test-encryption-key-123456789",
     algorithmId: "cohort_means",
+    algorithmParams: Buffer.from([]),
   };
 
   await program.methods

@@ -163,7 +163,8 @@ async function ensureRegistryInitialized(
 async function createMetaEntry(
   dataProvider: anchor.web3.Keypair,
   registryState: PublicKey,
-  durationSeconds = 86_400
+  durationSeconds = 86_400,
+  dataTypes: string[] = ["sleep", "heart_rate"]
 ) {
   // Read current counter from on-chain state; this becomes meta_id for this tx.
   const registryBefore = await program.account.registryState.fetch(registryState);
@@ -177,7 +178,7 @@ async function createMetaEntry(
   // Client args mirror UploadNewMetaParams in the Rust program.
   const params = {
     rawCid: "QmY7z5f8b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1",
-    dataTypes: ["sleep", "heart_rate"],
+    dataTypes,
     deviceType: device.deviceType,
     deviceModel: device.deviceModel,
     serviceProvider: device.serviceProvider,
@@ -214,6 +215,78 @@ async function createMetaEntry(
     uploadUnit,
     params,
   };
+}
+
+// Space the meta account is allocated at (8-byte discriminator +
+// DataEntryMeta::INIT_SPACE, whose data_types budget is 18 * (4 + 32) + 4).
+// update_meta_data_types reallocs to exactly this, which is what lets metas
+// created before the 8 -> 18 cap raise (PR #9, 541 bytes) grow past 8 entries.
+const META_ACCOUNT_SPACE = 901;
+
+// Decodes the MetaDataTypesUpdated event emitted by a confirmed transaction.
+async function decodeDataTypesEvent(signature: string) {
+  const latestBlockhash = await provider.connection.getLatestBlockhash();
+  await provider.connection.confirmTransaction(
+    { signature, ...latestBlockhash },
+    "confirmed"
+  );
+
+  const tx = await provider.connection.getTransaction(signature, {
+    commitment: "confirmed",
+    maxSupportedTransactionVersion: 0,
+  });
+
+  const coder = new anchor.BorshEventCoder(program.idl as anchor.Idl);
+  for (const line of tx?.meta?.logMessages ?? []) {
+    const match = line.match(/^Program data: (.+)$/);
+    if (!match) continue;
+    const decoded = coder.decode(match[1]);
+    if (decoded && decoded.name.toLowerCase() === "metadatatypesupdated") {
+      return decoded.data as { dataTypes: string[]; added: string[] };
+    }
+  }
+
+  return null;
+}
+
+// Owner-signed in-place growth of a meta's declared data types (issue #44).
+async function extendDataTypes(
+  dataProvider: anchor.web3.Keypair,
+  registryState: PublicKey,
+  metaId: anchor.BN,
+  newDataTypes: string[]
+) {
+  const signature = await program.methods
+    .updateMetaDataTypes(metaId, newDataTypes)
+    .accountsStrict({
+      registryState,
+      dataEntryMeta: deriveMetaPda(metaId),
+      provider: dataProvider.publicKey,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([dataProvider])
+    .rpc();
+
+  return { signature, event: await decodeDataTypesEvent(signature) };
+}
+
+// Builds the unsigned instruction so negative paths can assert without a helper.
+function extendDataTypesRpc(
+  dataProvider: anchor.web3.Keypair,
+  registryState: PublicKey,
+  metaId: anchor.BN,
+  newDataTypes: string[]
+) {
+  return program.methods
+    .updateMetaDataTypes(metaId, newDataTypes)
+    .accountsStrict({
+      registryState,
+      dataEntryMeta: deriveMetaPda(metaId),
+      provider: dataProvider.publicKey,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([dataProvider])
+    .rpc();
 }
 
 describe("data_registry migration parity", () => {
@@ -483,6 +556,15 @@ describe("data_registry migration parity", () => {
       "Paused"
     );
 
+    // Growing the declared data-type set should fail while paused.
+    await expectAnchorError(
+      () =>
+        extendDataTypesRpc(providerOne, registryState, created.metaId, [
+          "glucose",
+        ]),
+      "Paused"
+    );
+
     // Close operation should fail while paused.
     await expectAnchorError(
       () =>
@@ -651,5 +733,193 @@ describe("data_registry migration parity", () => {
     expect(await program.account.dataEntryMeta.fetchNullable(created.dataEntryMeta)).to.equal(null);
     expect(await program.account.uploadUnit.fetchNullable(created.uploadUnit)).to.equal(null);
     expect(await program.account.uploadUnit.fetchNullable(secondUnit)).to.equal(null);
+  });
+
+  // Issue #44: dataTypes is the OBSERVED metric set, so a meta must be able to
+  // pick up a metric it first sees months after creation — in place, one meta
+  // per provider per user, forever.
+  it("grows a meta's declared data types in place when the owner signs", async () => {
+    const created = await createMetaEntry(providerOne, registryState, 86_400, [
+      "steps",
+    ]);
+
+    const before = await program.account.dataEntryMeta.fetch(
+      created.dataEntryMeta
+    );
+    expect(before.dataTypes).to.deep.equal(["steps"]);
+
+    const { event } = await extendDataTypes(
+      providerOne,
+      registryState,
+      created.metaId,
+      ["heart_rate", "sleep"]
+    );
+
+    // Union, existing entry first, new ones appended in caller order.
+    const after = await program.account.dataEntryMeta.fetch(
+      created.dataEntryMeta
+    );
+    expect(after.dataTypes).to.deep.equal(["steps", "heart_rate", "sleep"]);
+    expect(after.dateOfModification.toNumber()).to.be.at.least(
+      before.dateOfModification.toNumber()
+    );
+
+    // The event carries the full resulting set (authoritative for indexers)
+    // plus this call's delta.
+    expect(event?.dataTypes).to.deep.equal(["steps", "heart_rate", "sleep"]);
+    expect(event?.added).to.deep.equal(["heart_rate", "sleep"]);
+  });
+
+  it("refuses to let anyone but the meta owner extend the declared set", async () => {
+    const created = await createMetaEntry(providerOne, registryState, 86_400, [
+      "steps",
+    ]);
+
+    await expectAnchorError(
+      () =>
+        extendDataTypesRpc(providerTwo, registryState, created.metaId, [
+          "glucose",
+        ]),
+      "NotOwner"
+    );
+
+    const meta = await program.account.dataEntryMeta.fetch(
+      created.dataEntryMeta
+    );
+    expect(meta.dataTypes).to.deep.equal(["steps"]);
+  });
+
+  // The grow-only invariant: retraction is unrepresentable, not just refused.
+  // Every unit's row keys must stay a subset of the meta's declared set, so a
+  // dead sensor is expressed by coverage going stale — never by dropping
+  // history.
+  it("cannot retract a declared data type, whatever the caller submits", async () => {
+    const created = await createMetaEntry(providerOne, registryState, 86_400, [
+      "steps",
+    ]);
+    await extendDataTypes(providerOne, registryState, created.metaId, [
+      "heart_rate",
+      "sleep",
+      "glucose",
+    ]);
+
+    const full = ["steps", "heart_rate", "sleep", "glucose"];
+
+    // A strict subset, a reordered subset, a single entry: none can shrink it.
+    for (const attempt of [["steps"], ["glucose"], ["sleep", "steps"]]) {
+      const { event } = await extendDataTypes(
+        providerOne,
+        registryState,
+        created.metaId,
+        attempt
+      );
+
+      expect(event?.added).to.deep.equal([]);
+      expect(event?.dataTypes).to.deep.equal(full);
+
+      const meta = await program.account.dataEntryMeta.fetch(
+        created.dataEntryMeta
+      );
+      expect(meta.dataTypes).to.deep.equal(full);
+    }
+
+    // An empty argument carries no intent and is rejected outright, matching
+    // upload_new_meta.
+    await expectAnchorError(
+      () => extendDataTypesRpc(providerOne, registryState, created.metaId, []),
+      "EmptyDataTypes"
+    );
+  });
+
+  // The app re-derives the observed set on every backfill, so re-submitting an
+  // unchanged set is the common case and must be free of side effects.
+  it("is idempotent when every submitted metric is already declared", async () => {
+    const created = await createMetaEntry(providerOne, registryState, 86_400, [
+      "steps",
+    ]);
+    await extendDataTypes(providerOne, registryState, created.metaId, [
+      "sleep",
+    ]);
+
+    const before = await program.account.dataEntryMeta.fetch(
+      created.dataEntryMeta
+    );
+
+    const { event } = await extendDataTypes(
+      providerOne,
+      registryState,
+      created.metaId,
+      ["steps", "sleep"]
+    );
+
+    const after = await program.account.dataEntryMeta.fetch(
+      created.dataEntryMeta
+    );
+    expect(event?.added).to.deep.equal([]);
+    expect(after.dataTypes).to.deep.equal(["steps", "sleep"]);
+
+    // Nothing about the dataset changed, so the modification stamp must not
+    // move — a no-op is observably a no-op.
+    expect(after.dateOfModification.toNumber()).to.equal(
+      before.dateOfModification.toNumber()
+    );
+  });
+
+  it("bounds growth by the same 18-type / 32-byte caps as creation", async () => {
+    const created = await createMetaEntry(providerOne, registryState, 86_400, [
+      "steps",
+    ]);
+
+    // 1 declared + 17 new = 18, exactly at the cap, and all 18 persist — which
+    // only works because the meta account is sized (or realloc'd) for the cap.
+    const seventeen = Array.from({ length: 17 }, (_, i) => `metric_${i}`);
+    await extendDataTypes(
+      providerOne,
+      registryState,
+      created.metaId,
+      seventeen
+    );
+
+    let meta = await program.account.dataEntryMeta.fetch(created.dataEntryMeta);
+    expect(meta.dataTypes.length).to.equal(18);
+    expect(meta.dataTypes[0]).to.equal("steps");
+    expect(meta.dataTypes[17]).to.equal("metric_16");
+
+    const accountInfo = await provider.connection.getAccountInfo(
+      created.dataEntryMeta
+    );
+    expect(accountInfo?.data.length).to.equal(META_ACCOUNT_SPACE);
+
+    // The 19th is refused and the declared set is left untouched.
+    await expectAnchorError(
+      () =>
+        extendDataTypesRpc(providerOne, registryState, created.metaId, [
+          "one_too_many",
+        ]),
+      "TooManyDataTypes"
+    );
+
+    meta = await program.account.dataEntryMeta.fetch(created.dataEntryMeta);
+    expect(meta.dataTypes.length).to.equal(18);
+
+    // Per-name byte bound: 32 is allowed, 33 is not.
+    const fresh = await createMetaEntry(providerOne, registryState, 86_400, [
+      "steps",
+    ]);
+    await expectAnchorError(
+      () =>
+        extendDataTypesRpc(providerOne, registryState, fresh.metaId, [
+          "a".repeat(33),
+        ]),
+      "TooManyDataTypes"
+    );
+
+    await extendDataTypes(providerOne, registryState, fresh.metaId, [
+      "a".repeat(32),
+    ]);
+    const freshMeta = await program.account.dataEntryMeta.fetch(
+      fresh.dataEntryMeta
+    );
+    expect(freshMeta.dataTypes).to.deep.equal(["steps", "a".repeat(32)]);
   });
 });

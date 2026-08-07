@@ -5,12 +5,13 @@ use crate::constants::{
     MAX_QUALITY_SIGNALS, MAX_SIGNAL_NAME_LEN,
 };
 use crate::contexts::{
-    CloseDataEntryMeta, CloseUploadUnit, RegisterRawUpload, UpdateUploadUnit, UploadNewMeta,
+    CloseDataEntryMeta, CloseUploadUnit, RegisterRawUpload, UpdateMetaDataTypes, UpdateUploadUnit,
+    UploadNewMeta,
 };
 use crate::errors::RegistryError;
 use crate::events::{
-    DataEntryDeleted, DataEntryVersionUpdated, DataStored, MetaAttributes, MetaDeviceInfo,
-    MetaEntryCreated, SignalQuality, UploadUnitClosed, UploadUnitCreated,
+    DataEntryDeleted, DataEntryVersionUpdated, DataStored, MetaAttributes, MetaDataTypesUpdated,
+    MetaDeviceInfo, MetaEntryCreated, SignalQuality, UploadUnitClosed, UploadUnitCreated,
 };
 use crate::params::UploadNewMetaParams;
 use crate::state::UploadUnit;
@@ -152,6 +153,90 @@ pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams)
         day_start_timestamp: params.day_start_timestamp,
         day_end_timestamp: params.day_end_timestamp,
         date_of_creation: clock.unix_timestamp,
+    });
+
+    Ok(())
+}
+
+/// Grow-only union of a meta's declared `data_types` with a caller-supplied set
+/// (issue #44: `dataTypes` is the OBSERVED metric set, so it must be able to
+/// grow in place when the app first sees rows for an undeclared metric).
+///
+/// Retraction is unrepresentable by construction rather than merely rejected:
+/// the result *starts* as the existing vector and is only ever pushed to, so no
+/// argument — a strict subset, a permutation, a disjoint set — can drop a
+/// declared entry. There is no code path that writes a shorter `data_types`.
+///
+/// Existing entries keep their original index order; genuinely new entries
+/// append in caller order, deduplicated against the union built so far (so a
+/// caller repeating a name within one call still adds it once).
+///
+/// The merged result is re-validated with `validate_data_types`, so growth is
+/// bounded by exactly the caps that bound `upload_new_meta` — never a looser
+/// set. Per-entry byte bounds are also checked on the input first, so a caller
+/// that submits an oversized name is told so even when the union happens to sit
+/// at the cap.
+///
+/// Kept as a free function so the invariant is unit-testable without a
+/// validator.
+pub fn merge_data_types(existing: &[String], new_data_types: &[String]) -> Result<Vec<String>> {
+    require!(!new_data_types.is_empty(), RegistryError::EmptyDataTypes);
+    require!(
+        new_data_types
+            .iter()
+            .all(|data_type| !data_type.is_empty() && data_type.len() <= MAX_DATA_TYPE_LEN),
+        RegistryError::TooManyDataTypes
+    );
+
+    let mut merged = existing.to_vec();
+    for data_type in new_data_types.iter() {
+        if !merged.iter().any(|declared| declared == data_type) {
+            merged.push(data_type.clone());
+        }
+    }
+
+    validate_data_types(&merged)?;
+    Ok(merged)
+}
+
+/// Extends a meta's declared `data_types` in place. Owner-signed, grow-only,
+/// and capped identically to creation (see `merge_data_types`).
+///
+/// No-op calls — every submitted name already declared — succeed idempotently:
+/// the account is left byte-identical (not even `date_of_modification` moves,
+/// since nothing about the dataset changed) and the event carries an empty
+/// `added`. The Expo app derives the observed set on every backfill, so
+/// re-submitting an unchanged set is the common case, not an error; erroring
+/// would force the client to keep a chain-accurate mirror just to stay quiet.
+/// An EMPTY `new_data_types` vector is still rejected (`EmptyDataTypes`),
+/// matching `upload_new_meta` — it carries no intent.
+pub fn update_meta_data_types(
+    ctx: Context<UpdateMetaDataTypes>,
+    _meta_id: u64,
+    new_data_types: Vec<String>,
+) -> Result<()> {
+    require!(!ctx.accounts.registry_state.paused, RegistryError::Paused);
+
+    let clock = Clock::get()?;
+    let meta = &mut ctx.accounts.data_entry_meta;
+
+    let previous_len = meta.data_types.len();
+    let merged = merge_data_types(&meta.data_types, &new_data_types)?;
+    // `merged` is `existing` followed by the appended entries, so the tail past
+    // the original length is exactly this call's delta.
+    let added = merged[previous_len..].to_vec();
+
+    if !added.is_empty() {
+        meta.data_types = merged.clone();
+        meta.date_of_modification = clock.unix_timestamp;
+    }
+
+    emit!(MetaDataTypesUpdated {
+        meta_id: meta.meta_id,
+        owner: meta.owner,
+        data_types: merged,
+        added,
+        timestamp: clock.unix_timestamp,
     });
 
     Ok(())
@@ -463,6 +548,214 @@ mod tests {
             DataEntryMeta::INIT_SPACE,
             fixed + data_types_space,
             "DataEntryMeta::INIT_SPACE must budget {MAX_DATA_TYPES} data types"
+        );
+    }
+}
+
+/// Issue #44 — `update_meta_data_types`. The invariant under test is that a
+/// declared metric can never be retracted, so most of these assert on what the
+/// merge REFUSES to lose rather than on what it adds.
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    fn set(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    fn error_code(err: anchor_lang::error::Error) -> u32 {
+        match err {
+            anchor_lang::error::Error::AnchorError(inner) => inner.error_code_number,
+            other => panic!("expected an AnchorError, got {other:?}"),
+        }
+    }
+
+    /// Explicit `u32` conversion. Under the `idl-build` feature `serde_json` is
+    /// in scope and a bare `.into()` becomes ambiguous, so pin the target type.
+    fn expected_code(err: RegistryError) -> u32 {
+        err.into()
+    }
+
+    #[test]
+    fn unions_new_entries_after_the_existing_ones() {
+        let merged = merge_data_types(&set(&["steps"]), &set(&["heart_rate", "sleep"]))
+            .expect("union must be accepted");
+        assert_eq!(merged, set(&["steps", "heart_rate", "sleep"]));
+    }
+
+    #[test]
+    fn existing_entries_keep_their_index_order() {
+        // Downstream diffs the declared set positionally; a reordering caller
+        // must not permute what is already on chain.
+        let existing = set(&["steps", "sleep", "glucose"]);
+        let merged = merge_data_types(&existing, &set(&["glucose", "sleep", "spo2", "steps"]))
+            .expect("reordered input must be accepted");
+        assert_eq!(merged, set(&["steps", "sleep", "glucose", "spo2"]));
+        assert_eq!(
+            merged[..existing.len()],
+            existing[..],
+            "the existing prefix must survive verbatim"
+        );
+    }
+
+    #[test]
+    fn duplicate_calls_are_idempotent() {
+        let existing = set(&["steps", "heart_rate"]);
+        let once = merge_data_types(&existing, &set(&["sleep"])).unwrap();
+        let twice = merge_data_types(&once, &set(&["sleep"])).unwrap();
+        assert_eq!(once, twice);
+
+        // A no-op call (everything already declared) succeeds and changes
+        // nothing — it must not error.
+        let noop = merge_data_types(&existing, &set(&["heart_rate", "steps"]))
+            .expect("a fully redundant call must succeed idempotently");
+        assert_eq!(noop, existing);
+    }
+
+    #[test]
+    fn repeated_names_inside_one_call_are_deduplicated() {
+        let merged = merge_data_types(&set(&["steps"]), &set(&["sleep", "sleep", "sleep"])).unwrap();
+        assert_eq!(merged, set(&["steps", "sleep"]));
+    }
+
+    /// The core grow-only guarantee. A caller cannot express retraction: a
+    /// strict subset, a disjoint set, and a single-entry set all leave every
+    /// previously declared metric in place.
+    #[test]
+    fn retraction_is_unrepresentable() {
+        let existing = set(&["steps", "heart_rate", "sleep", "glucose"]);
+
+        for attempt in [
+            set(&["steps"]),                    // strict subset
+            set(&["steps", "sleep"]),           // strict subset, reordered
+            set(&["spo2"]),                     // disjoint, shorter
+            set(&["heart_rate", "heart_rate"]), // duplicated subset
+        ] {
+            let merged = merge_data_types(&existing, &attempt)
+                .expect("a shrinking argument is not an error, it just cannot shrink");
+            for declared in existing.iter() {
+                assert!(
+                    merged.contains(declared),
+                    "{declared} was dropped by {attempt:?}"
+                );
+            }
+            assert!(
+                merged.len() >= existing.len(),
+                "the declared set must never get smaller"
+            );
+            assert_eq!(
+                merged[..existing.len()],
+                existing[..],
+                "the existing prefix must survive verbatim"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_an_empty_argument() {
+        let err = merge_data_types(&set(&["steps"]), &[])
+            .expect_err("an empty new_data_types carries no intent");
+        assert_eq!(error_code(err), expected_code(RegistryError::EmptyDataTypes));
+    }
+
+    #[test]
+    fn rejects_a_union_over_the_cap() {
+        let existing: Vec<String> = (0..MAX_DATA_TYPES).map(|i| format!("metric_{i}")).collect();
+
+        // Already at the cap: a redundant call still succeeds...
+        assert!(
+            merge_data_types(&existing, &set(&["metric_0"])).is_ok(),
+            "a no-op call at the cap must not be rejected"
+        );
+
+        // ...but one genuinely new entry pushes the union to 19.
+        let err = merge_data_types(&existing, &set(&["one_too_many"]))
+            .expect_err("a 19-entry union must be rejected");
+        assert_eq!(
+            error_code(err),
+            expected_code(RegistryError::TooManyDataTypes)
+        );
+
+        // The cap bounds the RESULT, not the argument: 17 declared + 2 new = 19.
+        let seventeen: Vec<String> = (0..MAX_DATA_TYPES - 1)
+            .map(|i| format!("metric_{i}"))
+            .collect();
+        assert!(
+            merge_data_types(&seventeen, &set(&["extra_a"])).is_ok(),
+            "17 + 1 = 18 is exactly at the cap"
+        );
+        assert_eq!(
+            error_code(merge_data_types(&seventeen, &set(&["extra_a", "extra_b"])).unwrap_err()),
+            expected_code(RegistryError::TooManyDataTypes),
+            "17 + 2 = 19 must be rejected"
+        );
+    }
+
+    #[test]
+    fn enforces_the_per_name_byte_limit() {
+        let at_limit = "a".repeat(MAX_DATA_TYPE_LEN);
+        assert!(
+            merge_data_types(&set(&["steps"]), &[at_limit.clone()]).is_ok(),
+            "32 bytes is allowed"
+        );
+
+        let over_limit = "a".repeat(MAX_DATA_TYPE_LEN + 1);
+        assert_eq!(
+            error_code(merge_data_types(&set(&["steps"]), &[over_limit]).unwrap_err()),
+            expected_code(RegistryError::TooManyDataTypes),
+            "33 bytes must be rejected"
+        );
+
+        assert_eq!(
+            error_code(merge_data_types(&set(&["steps"]), &[String::new()]).unwrap_err()),
+            expected_code(RegistryError::TooManyDataTypes),
+            "empty names must be rejected"
+        );
+    }
+
+    /// A grown meta must still fit the account it lives in. `DataEntryMeta` is
+    /// allocated at `INIT_SPACE`, which budgets the cap, and the
+    /// `UpdateMetaDataTypes` context reallocs legacy (pre-PR-#9) metas up to
+    /// that same size — so any union the merge accepts is serializable.
+    #[test]
+    fn a_capped_union_fits_the_meta_account() {
+        let existing = set(&["steps"]);
+        // Distinct names at exactly MAX_DATA_TYPE_LEN bytes — the worst case a
+        // union can reach: a 2-digit prefix plus 30 filler bytes.
+        let new: Vec<String> = (0..MAX_DATA_TYPES - 1)
+            .map(|i| format!("{i:02}{}", "a".repeat(MAX_DATA_TYPE_LEN - 2)))
+            .collect();
+
+        let merged = merge_data_types(&existing, &new).expect("18 entries is at the cap");
+        assert_eq!(merged.len(), MAX_DATA_TYPES);
+
+        let serialized = 4 + merged.iter().map(|s| 4 + s.len()).sum::<usize>();
+        let budget = 4 + MAX_DATA_TYPES * (4 + MAX_DATA_TYPE_LEN);
+        assert!(
+            serialized <= budget,
+            "worst-case union ({serialized} B) must fit the {budget} B budget in INIT_SPACE"
+        );
+    }
+
+    /// `new_data_types` rides in instruction data, so — like the quality digest
+    /// — its real ceiling is the 1232-byte transaction limit, not account
+    /// space. Unlike the digest, a full-cap argument DOES fit at maximum name
+    /// length, because this instruction carries nothing else of size.
+    #[test]
+    fn a_full_cap_argument_fits_in_a_transaction() {
+        // 1 signature (65) + header (3) + 5 account keys (161: registry_state,
+        // data_entry_meta, provider, system_program, program id) + blockhash
+        // (32) + instruction framing (8) + discriminator (8) + meta_id (8).
+        const NON_ARG_BYTES: usize = 65 + 3 + 161 + 32 + 8 + 8 + 8;
+        const TX_LIMIT: usize = 1232;
+
+        // Borsh: 4-byte Vec prefix + per entry (4-byte prefix + name bytes).
+        let arg_bytes = 4 + MAX_DATA_TYPES * (4 + MAX_DATA_TYPE_LEN);
+        let worst = NON_ARG_BYTES + arg_bytes;
+        assert!(
+            worst <= TX_LIMIT,
+            "a full {MAX_DATA_TYPES}-entry argument at {MAX_DATA_TYPE_LEN} bytes ({worst} B) \
+             must fit the {TX_LIMIT}-byte transaction limit"
         );
     }
 }

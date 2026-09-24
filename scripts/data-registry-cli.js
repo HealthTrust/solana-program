@@ -5,6 +5,7 @@ const path = require("path");
 
 const { Keypair, PublicKey, SystemProgram, Transaction } = anchor.web3;
 const idl = require("../target/idl/data_registry.json");
+const { commitmentArg, parseCommitment, resolveEntryCommitment } = require("./lib/provider-profile");
 
 const REGISTRY_SEED = Buffer.from("registry_state");
 const META_SEED = Buffer.from("meta");
@@ -174,14 +175,17 @@ function printUsage() {
       "  --url <rpc-url>",
       "  --wallet <keypair>",
       "  --tee-keypair <keypair>",
+      "  --backend-url <url>   populate/populate-real: register each entry's `profile` via the",
+      "                        wallet-signed PUT /profile and upload the returned commitment",
+      "                        (personal attributes are OFF-chain; see MVP/OFFCHAIN_ATTRIBUTES_DESIGN.md)",
       "",
       "Examples:",
       "  node ./scripts/data-registry-cli.js read --url https://api.devnet.solana.com --wallet ./.anchor/wsl-id.json --meta-from 12 --meta-to 16",
-      "  node ./scripts/data-registry-cli.js upload-meta --url https://api.devnet.solana.com --wallet ./.anchor/wsl-id.json --provider-keypair ./.anchor/provider1.json --data-types heart_rate,sleep --device-type Smartwatch --device-model 'Apple Watch Series 9' --service-provider HealthTrust --day-start 1713916800 --day-end 1714003200 --age 29 --gender 1 --height 165 --weight 58 --region 1 --physical-activity-level 2 --smoker 0 --diet 1 --chronic-conditions 1 --raw-cid QmExample",
+      "  node ./scripts/data-registry-cli.js upload-meta --url https://api.devnet.solana.com --wallet ./.anchor/wsl-id.json --provider-keypair ./.anchor/provider1.json --data-types heart_rate,sleep --device-type Smartwatch --device-model 'Apple Watch Series 9' --service-provider HealthTrust --day-start 1713916800 --day-end 1714003200 --profile-commit <hex32 from PUT /profile> --raw-cid QmExample",
       "  node ./scripts/data-registry-cli.js update-feat --url https://api.devnet.solana.com --wallet ./.anchor/wsl-id.json --tee-keypair \\\\wsl.localhost\\Ubuntu\\home\\giorgos\\.config\\solana\\devnet-tee.json --meta-id 12 --unit-index 0 --feat-cid bafy...",
       "  node ./scripts/data-registry-cli.js generate-real-payload --template ./docs/data-registry-populate.example.json --output ./docs/data-registry-populate.generated.json --tee-backend-dir ../MVP-TEE-Backend --skip-feat-cids",
       "  node ./scripts/data-registry-cli.js populate --input ./docs/data-registry-populate.example.json --url https://api.devnet.solana.com --wallet ./.anchor/wsl-id.json --tee-keypair \\\\wsl.localhost\\Ubuntu\\home\\giorgos\\.config\\solana\\devnet-tee.json",
-      "  node ./scripts/data-registry-cli.js populate-real --template ./docs/data-registry-populate.example.json --output ./docs/data-registry-populate.generated.json --tee-backend-dir ../MVP-TEE-Backend --skip-feat-cids --url https://api.devnet.solana.com --wallet ./.anchor/wsl-id.json",
+      "  node ./scripts/data-registry-cli.js populate-real --template ./docs/data-registry-populate.example.json --output ./docs/data-registry-populate.generated.json --tee-backend-dir ../MVP-TEE-Backend --skip-feat-cids --url https://api.devnet.solana.com --wallet ./.anchor/wsl-id.json --backend-url https://api.dev.healthtrust.app",
     ].join("\n")
   );
 }
@@ -345,15 +349,8 @@ async function readMeta(program, metaId) {
     deviceModel: meta.deviceModel,
     serviceProvider: meta.serviceProvider,
     dataTypes: meta.dataTypes,
-    chronicConditions: Array.from(meta.chronicConditions),
-    age: meta.age,
-    gender: meta.gender,
-    height: meta.height,
-    weight: meta.weight,
-    region: meta.region,
-    physicalActivityLevel: meta.physicalActivityLevel,
-    smoker: meta.smoker,
-    diet: meta.diet,
+    // Personal attributes are off-chain; only their salted commitment is stored.
+    profileCommit: Buffer.from(meta.profileCommit).toString("hex"),
     totalDuration: bnToString(meta.totalDuration),
     unitCount,
     dateOfCreation: bnToString(meta.dateOfCreation),
@@ -416,15 +413,10 @@ function buildUploadMetaParams(options) {
     serviceProvider: String(requireOption(options, "service-provider")),
     dayStartTimestamp: bn64(requireOption(options, "day-start")),
     dayEndTimestamp: bn64(requireOption(options, "day-end")),
-    age: Number(requireOption(options, "age")),
-    gender: Number(requireOption(options, "gender")),
-    height: Number(requireOption(options, "height")),
-    weight: Number(requireOption(options, "weight")),
-    region: Number(requireOption(options, "region")),
-    physicalActivityLevel: Number(requireOption(options, "physical-activity-level")),
-    smoker: Number(requireOption(options, "smoker")),
-    diet: Number(requireOption(options, "diet")),
-    chronicConditions: Buffer.from(parseCsvNumbers(options["chronic-conditions"])),
+    // Attributes are off-chain (PUT /profile); pass the returned commitment as
+    // --profile-commit <hex32>. Omitted → all-zero commitment (integrity =
+    // mismatch on the backend, fine for throwaway test metas).
+    profileCommit: commitmentArg(parseCommitment(options["profile-commit"])),
   };
 }
 
@@ -860,6 +852,10 @@ async function commandPopulate(program, provider, options) {
     options["tee-keypair"]
   );
   const results = [];
+  const profileCommitCache = new Map();
+  if (options["backend-url"] && payload.entries.some((e) => e && e.profile && !e.ownerKeypair)) {
+    fail("--backend-url requires every entry with a `profile` to have its own ownerKeypair (the profile is wallet-signed)");
+  }
   const persistPayload = () => {
     fs.writeFileSync(inputPath, JSON.stringify(payload, null, 2));
   };
@@ -944,6 +940,17 @@ async function commandPopulate(program, provider, options) {
         rawEntry.populatedMetaPending = true;
         persistPayload();
 
+        // Off-chain attributes: with --backend-url the entry's `profile` is
+        // registered through the wallet-signed PUT /profile (signed by the
+        // entry's own keypair) and the returned commitment goes on-chain.
+        // Without it, `profileCommit` (hex) from the payload or zeros is used.
+        const profileCommit = await resolveEntryCommitment(
+          entry,
+          providerSigner,
+          options["backend-url"],
+          profileCommitCache
+        );
+
         await program.methods
           .uploadNewMeta({
             rawCid: entry.rawCid,
@@ -953,15 +960,7 @@ async function commandPopulate(program, provider, options) {
             serviceProvider: entry.serviceProvider,
             dayStartTimestamp: bn64(entry.dayStartTimestamp),
             dayEndTimestamp: bn64(entry.dayEndTimestamp),
-            age: entry.age,
-            gender: entry.gender,
-            height: entry.height,
-            weight: entry.weight,
-            region: entry.region,
-            physicalActivityLevel: entry.physicalActivityLevel,
-            smoker: entry.smoker,
-            diet: entry.diet,
-            chronicConditions: Buffer.from(entry.chronicConditions || []),
+            profileCommit: commitmentArg(profileCommit),
           })
           .accountsStrict({
             registryState: registry.address,

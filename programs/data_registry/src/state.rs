@@ -24,17 +24,15 @@ pub struct DataEntryMeta {
     #[max_len(48)]
     pub service_provider: String,
 
-    pub age: u8,
-    pub gender: u8,
-    pub height: u8,
-    pub weight: u8,
-    pub region: u8,
-    pub physical_activity_level: u8,
-    pub smoker: u8,
-    pub diet: u8,
-
-    #[max_len(16)]
-    pub chronic_conditions: Vec<u8>,
+    /// Salted commitment to the provider's OFF-chain attribute profile version
+    /// that was current at upload time: `sha256(salt || canonical_profile)`.
+    /// Personal attributes (age, gender, height, weight, region, activity,
+    /// smoker, diet, chronic conditions) are Art. 9 health data and are never
+    /// written on-chain; they live in the backend `provider_profile` and are
+    /// erasable. The commitment lets a study verify the served profile matches
+    /// what was attested, while an erased profile (salt deleted) leaves these
+    /// 32 bytes unrecoverable. See MVP/OFFCHAIN_ATTRIBUTES_DESIGN.md.
+    pub profile_commit: [u8; 32],
 
     #[max_len(18, 32)]
     pub data_types: Vec<String>,

@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
 
 use crate::constants::{
-    MAX_CHRONIC_CONDITIONS, MAX_DATA_TYPE_LEN, MAX_DATA_TYPES, MAX_DIGEST_VERSION_LEN,
-    MAX_QUALITY_SIGNALS, MAX_SIGNAL_NAME_LEN,
+    MAX_DATA_TYPE_LEN, MAX_DATA_TYPES, MAX_DIGEST_VERSION_LEN, MAX_QUALITY_SIGNALS,
+    MAX_SIGNAL_NAME_LEN,
 };
 use crate::contexts::{
     CloseDataEntryMeta, CloseUploadUnit, RegisterRawUpload, UpdateMetaDataTypes, UpdateUploadUnit,
@@ -10,7 +10,7 @@ use crate::contexts::{
 };
 use crate::errors::RegistryError;
 use crate::events::{
-    DataEntryDeleted, DataEntryVersionUpdated, DataStored, MetaAttributes, MetaDataTypesUpdated,
+    DataEntryDeleted, DataEntryVersionUpdated, DataStored, MetaCommit, MetaDataTypesUpdated,
     MetaDeviceInfo, MetaEntryCreated, SignalQuality, UploadUnitClosed, UploadUnitCreated,
 };
 use crate::params::UploadNewMetaParams;
@@ -62,10 +62,6 @@ pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams)
     require!(!state.paused, RegistryError::Paused);
     validate_data_types(&params.data_types)?;
     require!(
-        params.chronic_conditions.len() <= MAX_CHRONIC_CONDITIONS,
-        RegistryError::TooManyConditions
-    );
-    require!(
         params.day_end_timestamp > params.day_start_timestamp,
         RegistryError::InvalidTimestampRange
     );
@@ -84,15 +80,7 @@ pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams)
     meta.device_type = params.device_type.clone();
     meta.device_model = params.device_model.clone();
     meta.service_provider = params.service_provider.clone();
-    meta.age = params.age;
-    meta.gender = params.gender;
-    meta.height = params.height;
-    meta.weight = params.weight;
-    meta.region = params.region;
-    meta.physical_activity_level = params.physical_activity_level;
-    meta.smoker = params.smoker;
-    meta.diet = params.diet;
-    meta.chronic_conditions = params.chronic_conditions.clone();
+    meta.profile_commit = params.profile_commit;
     meta.data_types = params.data_types.clone();
     meta.total_duration = total_duration;
     meta.unit_count = 1;
@@ -126,17 +114,10 @@ pub fn upload_new_meta(ctx: Context<UploadNewMeta>, params: UploadNewMetaParams)
         date_of_creation: clock.unix_timestamp,
     });
 
-    emit!(MetaAttributes {
+    emit!(MetaCommit {
         meta_id,
-        age: params.age,
-        gender: params.gender,
-        height: params.height,
-        weight: params.weight,
-        region: params.region,
-        physical_activity_level: params.physical_activity_level,
-        smoker: params.smoker,
-        diet: params.diet,
-        chronic_conditions: params.chronic_conditions,
+        owner: meta.owner,
+        profile_commit: params.profile_commit,
     });
 
     emit!(MetaDeviceInfo {
@@ -535,8 +516,7 @@ mod tests {
             + (4 + 32) // device_type
             + (4 + 48) // device_model
             + (4 + 48) // service_provider
-            + 8        // age..diet, eight u8 attributes
-            + (4 + 16) // chronic_conditions
+            + 32       // profile_commit (off-chain attribute commitment)
             + 8        // total_duration
             + 4        // unit_count
             + 4        // open_unit_count

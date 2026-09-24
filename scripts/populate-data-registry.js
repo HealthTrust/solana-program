@@ -4,6 +4,11 @@ const path = require("path");
 
 const { Keypair, PublicKey, SystemProgram } = anchor.web3;
 const idl = require("../target/idl/data_registry.json");
+const { commitmentArg, parseCommitment, resolveEntryCommitment } = require("./lib/provider-profile");
+
+// Per-run cache of owner+profile → commitment so repeated entries for one
+// participant hit PUT /profile once.
+const profileCommitCache = new Map();
 
 const REGISTRY_SEED = Buffer.from("registry_state");
 const META_SEED = Buffer.from("meta");
@@ -62,6 +67,8 @@ function parseArgs(argv) {
       options.providerMinLamports = Number(argv[++index]);
     } else if (token === "--initialize-if-needed") {
       options.initializeIfNeeded = true;
+    } else if (token === "--backend-url") {
+      options.backendUrl = argv[++index];
     } else if (token === "--help" || token === "-h") {
       options.help = true;
     } else {
@@ -85,6 +92,8 @@ function printUsage() {
       "  Provider wallets are auto-funded by the main --wallet before they submit data.",
       "  --provider-min-lamports overrides the per-provider target balance (default 50000000 lamports).",
       "  --tee-keypair is required only when the payload wants feat CID updates and the registry tee authority is not the wallet.",
+      "  --backend-url registers each entry's `profile` via the wallet-signed PUT /profile (needs ownerKeypair) and",
+      "    uploads the returned commitment; without it `profileCommit` (hex) or zeros is used. Attributes are OFF-chain.",
     ].join("\n")
   );
 }
@@ -149,8 +158,11 @@ function normalizeEntry(entry, index) {
     fail(`Entry ${index} must include at least one data type.`);
   }
 
-  if (!Array.isArray(entry.chronicConditions)) {
-    fail(`Entry ${index} chronicConditions must be an array.`);
+  if (entry.profile !== undefined && (entry.profile === null || typeof entry.profile !== "object")) {
+    fail(`Entry ${index} profile must be an object (off-chain attributes).`);
+  }
+  if (entry.profileCommit !== undefined) {
+    parseCommitment(entry.profileCommit); // throws on a malformed value
   }
 
   if (typeof entry.dayStartTimestamp !== "number" || typeof entry.dayEndTimestamp !== "number") {
@@ -344,15 +356,10 @@ async function uploadEntry(program, provider, registryState, teeSigner, rawEntry
       serviceProvider: entry.serviceProvider,
       dayStartTimestamp: bn64(entry.dayStartTimestamp),
       dayEndTimestamp: bn64(entry.dayEndTimestamp),
-      age: entry.age,
-      gender: entry.gender,
-      height: entry.height,
-      weight: entry.weight,
-      region: entry.region,
-      physicalActivityLevel: entry.physicalActivityLevel,
-      smoker: entry.smoker,
-      diet: entry.diet,
-      chronicConditions: Buffer.from(entry.chronicConditions),
+      // Off-chain attributes: only the profile commitment goes on-chain.
+      profileCommit: commitmentArg(
+        await resolveEntryCommitment(entry, providerSigner, options.backendUrl, profileCommitCache)
+      ),
     })
     .accountsStrict({
       registryState,

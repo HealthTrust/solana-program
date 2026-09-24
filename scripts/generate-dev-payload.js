@@ -114,9 +114,16 @@ selected.forEach(({ brand, count }, bi) => {
       serviceProvider: brand.serviceProvider,
       dayStartTimestamp: u0s,
       dayEndTimestamp: u0s + DAY,
-      age: person.age, gender: person.gender, height: person.height, weight: person.weight,
-      region: person.region, physicalActivityLevel: person.physicalActivityLevel,
-      smoker: person.smoker, diet: person.diet, chronicConditions: person.chronicConditions,
+      // Personal attributes are OFF-chain: `populate --backend-url` registers
+      // this profile with the backend (signed by ownerKeypair) and uploads
+      // only the returned commitment. Age is derived by the backend from the
+      // date of birth, so the persona's age is turned into a DOB here.
+      profile: {
+        dateOfBirth: `${2026 - person.age}-06-15`,
+        gender: person.gender, height: person.height, weight: person.weight,
+        region: person.region, physicalActivityLevel: person.physicalActivityLevel,
+        smoker: person.smoker, diet: person.diet, chronicConditions: person.chronicConditions,
+      },
       appendedUploads: appended,
     });
   }

@@ -9,18 +9,17 @@ pub struct MetaEntryCreated {
     pub date_of_creation: i64,
 }
 
+/// Emitted alongside `MetaEntryCreated`. Replaces the former `MetaAttributes`
+/// event: instead of plaintext personal attributes, the upload carries only the
+/// salted commitment to the provider's off-chain profile version
+/// (`sha256(salt || canonical_profile)`). The indexer stores it in
+/// `meta_commit` and the backend flags each meta's `integrity` by comparing it
+/// with the profile version it serves. See MVP/OFFCHAIN_ATTRIBUTES_DESIGN.md.
 #[event]
-pub struct MetaAttributes {
+pub struct MetaCommit {
     pub meta_id: u64,
-    pub age: u8,
-    pub gender: u8,
-    pub height: u8,
-    pub weight: u8,
-    pub region: u8,
-    pub physical_activity_level: u8,
-    pub smoker: u8,
-    pub diet: u8,
-    pub chronic_conditions: Vec<u8>,
+    pub owner: Pubkey,
+    pub profile_commit: [u8; 32],
 }
 
 #[event]

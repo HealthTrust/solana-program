@@ -14,6 +14,8 @@ pub enum RegistryError {
     EmptyDataTypes,
     #[msg("Too many data types (max 18)")]
     TooManyDataTypes,
+    /// No longer raised — attributes moved off-chain. Kept so the error codes
+    /// after it (6007+) stay stable for existing clients and docs.
     #[msg("Too many chronic conditions (max 16)")]
     TooManyConditions,
     #[msg("day_end_timestamp must be greater than day_start_timestamp")]

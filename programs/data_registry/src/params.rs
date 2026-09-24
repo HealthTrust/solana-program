@@ -9,13 +9,8 @@ pub struct UploadNewMetaParams {
     pub service_provider: String,
     pub day_start_timestamp: i64,
     pub day_end_timestamp: i64,
-    pub age: u8,
-    pub gender: u8,
-    pub height: u8,
-    pub weight: u8,
-    pub region: u8,
-    pub physical_activity_level: u8,
-    pub smoker: u8,
-    pub diet: u8,
-    pub chronic_conditions: Vec<u8>,
+    /// `sha256(salt || canonical_profile)` returned by the backend's
+    /// `PUT /profile` for the provider's current attribute version. Personal
+    /// attributes themselves are never part of the upload (see `DataEntryMeta`).
+    pub profile_commit: [u8; 32],
 }

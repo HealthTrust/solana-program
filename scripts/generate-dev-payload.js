@@ -1,57 +1,68 @@
-// Generates a rich data-registry populate payload for the DEV marketplace.
+// Generates a rich TEMPLATE for `data-registry-cli.js populate-real` for the
+// DEV marketplace. The CLI will turn this template into fresh encrypted IPFS
+// blobs by calling the TEE-side generator, so this file contains participant
+// owners, demographics, data types, and day windows — not stale raw CIDs.
+//
 // The frontend groups datasets by serviceProvider (one card per provider, with
 // N participants + aggregated demographic breakdowns). So we emit several
 // branded providers, each with multiple varied-demographic participants, each
-// with multiple units. rawCids reuse the 5 known-good pinned blobs (real,
-// TEE-decryptable); dataTypes per provider match each blob's real content.
+// with multiple units.
 const fs = require("fs");
 const path = require("path");
+const anchor = require("@coral-xyz/anchor");
+const { Keypair } = anchor.web3;
 
 const DAY = 86400;
 const BASE = 1780000000; // recent-ish day windows
 
-// Each brand themed to one real data profile (CIDs + their true dataTypes).
+// One distinct wallet PER PARTICIPANT. A provider card shows N participants;
+// each must be a separate on-chain owner so cohort algorithms that group by
+// owner (e.g. cohort_cosinor) count them as N distinct people. Using one wallet
+// per provider (the old behaviour) collapsed every provider to 1 participant.
+// Keypair files are created on first use and reused thereafter, so re-running
+// the generator is stable and re-seeding maps to the same owners.
+function participantKeypairPath(serviceProvider, participantIndex) {
+  const slug = serviceProvider.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return `./.anchor/participants/${slug}-p${participantIndex}.json`;
+}
+
+function ensureKeypairFile(relPath) {
+  const abs = path.resolve(__dirname, "..", relPath.replace(/^\.\//, ""));
+  if (!fs.existsSync(abs)) {
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, JSON.stringify(Array.from(Keypair.generate().secretKey)));
+  }
+  return relPath;
+}
+
+// Each brand themed to one provider profile. `unitsPerParticipant` controls how
+// many daily upload units each participant will get when the template is turned
+// into real raw CIDs by `populate-real`.
 const BRANDS = [
   {
     serviceProvider: "Fitbit", deviceType: "Smartwatch", deviceModel: "Fitbit Charge 6",
-    owner: "./.anchor/provider1.json", dataTypes: ["heart_rate", "sleep", "steps"],
-    cids: [
-      "bafkreid6wjuqbscmktylhwtc64fmcb4odnkfd4gky2nmx2xzmzifvspirq",
-      "bafkreiayqacbdkbunq7qj67wk5jevcaktt4u42znfl4xfispmwsm6dbsky",
-    ],
+    dataTypes: ["heart_rate", "sleep", "steps"],
+    unitsPerParticipant: 2,
   },
   {
     serviceProvider: "Dexcom", deviceType: "CGM + Fitness Band", deviceModel: "Dexcom G7 / Fitbit",
-    owner: "./.anchor/provider2.json", dataTypes: ["heart_rate", "glucose", "steps", "calories_burned"],
-    cids: [
-      "bafkreicsomjllan4zbz6d4e4pulfgeu2odpx3jj4tji5s6nkha6h7zwnzm",
-      "bafkreiff3ndd7cxgpxiwdtjscmrf4ikidkj4dxdl55lo3rftnf7hbl6554",
-      "bafkreige7gs3h23xtfbzgtapjw3aanuxtchsc3utjifubydsvcnpi3odhu",
-    ],
+    dataTypes: ["heart_rate", "glucose", "steps", "calories_burned"],
+    unitsPerParticipant: 3,
   },
   {
     serviceProvider: "Omron", deviceType: "Home Monitor", deviceModel: "Omron Complete",
-    owner: "./.anchor/provider3.json", dataTypes: ["heart_rate", "blood_pressure", "spo2"],
-    cids: [
-      "bafkreifyi5qetgzrtsohmsvnuf6kbh5t6f2totvkwl6eoo3fk3smynazuq",
-      "bafkreiam7whyeqhhvz5ckw3nqzrwzlli7h5fghrkandt6ok6bzpezk33ve",
-    ],
+    dataTypes: ["heart_rate", "blood_pressure", "spo2"],
+    unitsPerParticipant: 2,
   },
   {
     serviceProvider: "BioPatch", deviceType: "Clinical Wearable", deviceModel: "BioPatch CX",
-    owner: "./.anchor/provider4.json", dataTypes: ["heart_rate", "ecg", "respiration_rate", "temperature"],
-    cids: [
-      "bafkreiflgrg226zgy5eefoajdxlojiw7zoykx5yyeibos7n2k7fvi566xi",
-      "bafkreidptdvdd4wqb7zv4eeuqjso4mxp4m37tvwypp6eigc4n3udxpzuni",
-    ],
+    dataTypes: ["heart_rate", "ecg", "respiration_rate", "temperature"],
+    unitsPerParticipant: 2,
   },
   {
     serviceProvider: "Oura", deviceType: "Smart Ring", deviceModel: "Oura Ring Gen 3",
-    owner: "./.anchor/provider5.json", dataTypes: ["heart_rate", "sleep", "hydration", "stress"],
-    cids: [
-      "bafkreiewxmjznoaw5iir2zm63t6fnfofiucon6wvexq5xy4b5aas75pp54",
-      "bafkreigvpnw4z6frxuddd4kqlkibpgac5zs2b3oev5gopotmoz3mn4kbqy",
-    ],
+    dataTypes: ["heart_rate", "sleep", "hydration", "stress"],
+    unitsPerParticipant: 2,
   },
 ];
 
@@ -69,9 +80,10 @@ const PEOPLE = [
 ];
 
 // Optional argv: "Brand:count ..." to emit a subset (e.g. a remainder after a
-// partial run), and "--out <path>". Defaults to all brands x3 -> dev-populate.generated.json.
+// partial run), and "--out <path>". Defaults to all brands x3 ->
+// dev-populate.template.json.
 const argv = process.argv.slice(2);
-let outName = "dev-populate.generated.json";
+let outName = "dev-populate.template.json";
 const pick = {};
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === "--out") { outName = argv[++i]; continue; }
@@ -90,22 +102,28 @@ selected.forEach(({ brand, count }, bi) => {
   for (let e = 0; e < count; e++) {
     const person = PEOPLE[(bi * 3 + e) % PEOPLE.length];
     const u0s = BASE + unitClock++ * DAY;
-    const appended = brand.cids.slice(1).map((cid) => {
+    const appended = Array.from({ length: Math.max(0, (brand.unitsPerParticipant || 1) - 1) }, () => {
       const s = BASE + unitClock++ * DAY;
-      return { rawCid: cid, dayStartTimestamp: s, dayEndTimestamp: s + DAY };
+      return { dayStartTimestamp: s, dayEndTimestamp: s + DAY };
     });
     entries.push({
-      ownerKeypair: brand.owner,
-      rawCid: brand.cids[0],
+      ownerKeypair: ensureKeypairFile(participantKeypairPath(brand.serviceProvider, e)),
       dataTypes: brand.dataTypes,
       deviceType: brand.deviceType,
       deviceModel: brand.deviceModel,
       serviceProvider: brand.serviceProvider,
       dayStartTimestamp: u0s,
       dayEndTimestamp: u0s + DAY,
-      age: person.age, gender: person.gender, height: person.height, weight: person.weight,
-      region: person.region, physicalActivityLevel: person.physicalActivityLevel,
-      smoker: person.smoker, diet: person.diet, chronicConditions: person.chronicConditions,
+      // Personal attributes are OFF-chain: `populate --backend-url` registers
+      // this profile with the backend (signed by ownerKeypair) and uploads
+      // only the returned commitment. Age is derived by the backend from the
+      // date of birth, so the persona's age is turned into a DOB here.
+      profile: {
+        dateOfBirth: `${2026 - person.age}-06-15`,
+        gender: person.gender, height: person.height, weight: person.weight,
+        region: person.region, physicalActivityLevel: person.physicalActivityLevel,
+        smoker: person.smoker, diet: person.diet, chronicConditions: person.chronicConditions,
+      },
       appendedUploads: appended,
     });
   }

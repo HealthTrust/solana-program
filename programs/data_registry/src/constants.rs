@@ -1,6 +1,8 @@
 pub const MAX_DATA_TYPES: usize = 18;
 pub const MAX_DATA_TYPE_LEN: usize = 32;
-pub const MAX_CHRONIC_CONDITIONS: usize = 16;
+// MAX_CHRONIC_CONDITIONS was removed with the on-chain attributes: personal
+// attributes now live off-chain (MVP/OFFCHAIN_ATTRIBUTES_DESIGN.md); the chain
+// carries only DataEntryMeta::profile_commit.
 
 pub const MAX_DEVICE_TYPE_LEN: usize = 32;
 pub const MAX_DEVICE_MODEL_LEN: usize = 48;

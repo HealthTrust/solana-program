@@ -28,20 +28,13 @@ const registrySeed = Buffer.from("registry_state");
 const metaSeed = Buffer.from("meta");
 const unitSeed = Buffer.from("unit");
 
-// Fixed demographic values keep assertions stable across runs.
-const attributes = {
-  age: 1,
-  gender: 1,
-  height: 170,
-  weight: 65,
-  region: 1,
-  physicalActivityLevel: 1,
-  smoker: 0,
-  diet: 1,
-  chronicConditions: [2, 1, 4],
-};
-
-const chronicConditionsBuffer = Buffer.from(attributes.chronicConditions);
+// Personal attributes live off-chain; an upload carries only the 32-byte salted
+// commitment to the provider's profile version. A fixed value keeps assertions
+// stable across runs.
+const profileCommit = Buffer.from(
+  "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "hex"
+);
 
 // Fixed device metadata used in upload_new_meta.
 const device = {
@@ -184,15 +177,7 @@ async function createMetaEntry(
     serviceProvider: device.serviceProvider,
     dayStartTimestamp: new anchor.BN(now),
     dayEndTimestamp: new anchor.BN(now + durationSeconds),
-    age: attributes.age,
-    gender: attributes.gender,
-    height: attributes.height,
-    weight: attributes.weight,
-    region: attributes.region,
-    physicalActivityLevel: attributes.physicalActivityLevel,
-    smoker: attributes.smoker,
-    diet: attributes.diet,
-    chronicConditions: chronicConditionsBuffer,
+    profileCommit: Array.from(profileCommit),
   };
 
   // Real transaction to local validator. This executes the Rust program.
@@ -221,7 +206,9 @@ async function createMetaEntry(
 // DataEntryMeta::INIT_SPACE, whose data_types budget is 18 * (4 + 32) + 4).
 // update_meta_data_types reallocs to exactly this, which is what lets metas
 // created before the 8 -> 18 cap raise (PR #9, 541 bytes) grow past 8 entries.
-const META_ACCOUNT_SPACE = 901;
+// 905 = 901 (with the eight u8 attributes + 16-slot conditions vec) - 28 + 32
+// (the attributes were replaced by the 32-byte profile_commit).
+const META_ACCOUNT_SPACE = 905;
 
 // Decodes the MetaDataTypesUpdated event emitted by a confirmed transaction.
 async function decodeDataTypesEvent(signature: string) {
@@ -329,6 +316,9 @@ describe("data_registry migration parity", () => {
     expect(meta.totalDuration.toNumber()).to.equal(86_400);
     expect(meta.unitCount).to.equal(1);
     expect(meta.dataTypes).to.deep.equal(created.params.dataTypes);
+    // The only attribute-related state on-chain is the opaque commitment.
+    expect(Buffer.from(meta.profileCommit).equals(profileCommit)).to.equal(true);
+    expect(Object.keys(meta)).to.not.include.members(["age", "gender", "chronicConditions"]);
 
     // Assert: first upload unit is created as index 0.
     expect(unit.metaId.toString()).to.equal(created.metaId.toString());
@@ -489,15 +479,7 @@ describe("data_registry migration parity", () => {
             serviceProvider: device.serviceProvider,
             dayStartTimestamp: new anchor.BN(1_000),
             dayEndTimestamp: new anchor.BN(2_000),
-            age: attributes.age,
-            gender: attributes.gender,
-            height: attributes.height,
-            weight: attributes.weight,
-            region: attributes.region,
-            physicalActivityLevel: attributes.physicalActivityLevel,
-            smoker: attributes.smoker,
-            diet: attributes.diet,
-            chronicConditions: chronicConditionsBuffer,
+            profileCommit: Array.from(profileCommit),
           })
           .accountsStrict({
             registryState,

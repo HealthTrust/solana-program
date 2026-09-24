@@ -132,15 +132,7 @@ units, and the TEE processing them into feature CIDs.
 | `device_type` | `String` | Device category, e.g. `"smartwatch"` (max 32 bytes) |
 | `device_model` | `String` | Model name, e.g. `"Apple Watch Series 7"` (max 48 bytes) |
 | `service_provider` | `String` | Health platform, e.g. `"Apple Health"` (max 48 bytes) |
-| `age` | `u8` | Age bracket code |
-| `gender` | `u8` | Gender code |
-| `height` | `u8` | Height code |
-| `weight` | `u8` | Weight code |
-| `region` | `u8` | Geographic region code |
-| `physical_activity_level` | `u8` | Activity level code |
-| `smoker` | `u8` | `0` = non-smoker, `1` = smoker |
-| `diet` | `u8` | Diet code |
-| `chronic_conditions` | `Vec<u8>` | Condition codes (max 16) |
+| `profile_commit` | `[u8; 32]` | `sha256(salt ‖ canonical_profile)` — salted commitment to the provider's **off-chain** attribute profile version (age/gender/height/weight/region/activity/smoker/diet/chronic conditions live in the backend `provider_profile`, never on-chain; see `MVP/OFFCHAIN_ATTRIBUTES_DESIGN.md`) |
 | `data_types` | `Vec<String>` | Data type strings in this dataset (max 18, each max 32 bytes) |
 | `total_duration` | `u64` | Cumulative seconds of data across all upload units |
 | `unit_count` | `u32` | Number of `UploadUnit` PDAs under this meta |
@@ -315,17 +307,9 @@ The `meta_id` is assigned by the program from `registry_state.next_meta_id`.
 | `service_provider` | `String` | 48 bytes | Health platform name |
 | `day_start_timestamp` | `i64` | — | Start of data window (Unix seconds) |
 | `day_end_timestamp` | `i64` | — | End of data window (Unix seconds, must be > start) |
-| `age` | `u8` | — | Age bracket code |
-| `gender` | `u8` | — | Gender code |
-| `height` | `u8` | — | Height code |
-| `weight` | `u8` | — | Weight code |
-| `region` | `u8` | — | Region code |
-| `physical_activity_level` | `u8` | — | Activity level code |
-| `smoker` | `u8` | — | `0` = non-smoker, `1` = smoker |
-| `diet` | `u8` | — | Diet code |
-| `chronic_conditions` | `Vec<u8>` | 16 entries | Chronic condition codes |
+| `profile_commit` | `[u8; 32]` | — | Commitment returned by the backend's `PUT /profile` for the provider's current attribute version. Personal attributes are **not** part of the upload. |
 
-**Emits (in order):** `MetaEntryCreated`, `MetaAttributes`, `MetaDeviceInfo`, `UploadUnitCreated`
+**Emits (in order):** `MetaEntryCreated`, `MetaCommit`, `MetaDeviceInfo`, `UploadUnitCreated`
 
 ---
 
@@ -449,19 +433,16 @@ total_duration:     u64      — seconds (day_end - day_start of first unit)
 date_of_creation:   i64      — Unix timestamp
 ```
 
-#### `MetaAttributes`
-Fired alongside `MetaEntryCreated`. Contains demographic/health attributes.
+#### `MetaCommit`
+Fired alongside `MetaEntryCreated`. Replaces the former `MetaAttributes` event:
+personal attributes are off-chain (backend `provider_profile`, erasable); the
+chain carries only the salted commitment to the profile version the provider
+attested to at upload time. The indexer stores it in `meta_commit`; the backend
+compares it with the served profile version and flags `integrity` per meta.
 ```
-meta_id:                    u64
-age:                        u8
-gender:                     u8
-height:                     u8
-weight:                     u8
-region:                     u8
-physical_activity_level:    u8
-smoker:                     u8
-diet:                       u8
-chronic_conditions:         u8[]  — array of condition codes
+meta_id:            u64
+owner:              Pubkey
+profile_commit:     [u8; 32]  — sha256(salt ‖ canonical_profile)
 ```
 
 #### `MetaDeviceInfo`
@@ -1291,7 +1272,7 @@ async function parseHistoricalEvents(programId: PublicKey, idl: any) {
 | Table | Primary events | Secondary events |
 |---|---|---|
 | `datasets` | `MetaEntryCreated` | `DataEntryDeleted` |
-| `dataset_attributes` | `MetaAttributes` | — |
+| `meta_commit` | `MetaCommit` | — |
 | `dataset_devices` | `MetaDeviceInfo` | — |
 | `upload_units` | `UploadUnitCreated` | `DataEntryVersionUpdated`, `UploadUnitClosed` |
 | `data_activity` | `DataStored` | — |

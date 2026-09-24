@@ -602,15 +602,8 @@ describeDevnet("devnet deployed contracts full flow", () => {
         serviceProvider: "HealthTrust Devnet",
         dayStartTimestamp: new anchor.BN(now),
         dayEndTimestamp: new anchor.BN(now + 86_400),
-        age: 2,
-        gender: 1,
-        height: 175,
-        weight: 70,
-        region: 1,
-        physicalActivityLevel: 2,
-        smoker: 0,
-        diet: 1,
-        chronicConditions: Buffer.from([1, 4]),
+        // Attributes live off-chain; an upload carries only the profile commitment.
+        profileCommit: Array.from(Buffer.alloc(32, 7)),
       })
       .accountsStrict({
         registryState,

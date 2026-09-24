@@ -167,8 +167,8 @@ function printUsage() {
       "  close-unit          Close a specific upload unit",
       "  fund-provider       Transfer SOL from the main wallet to a provider wallet",
       "  generate-real-payload Generate real encrypted raw data + optional feat CIDs from a template",
-      "  populate            Bulk populate from a JSON file",
-      "  populate-real       Generate real CIDs from a template, then populate on-chain",
+      "  populate            Bulk populate from a JSON file (resumable: writes populatedMetaId markers back to --input)",
+      "  populate-real       Generate real CIDs from a template, then populate on-chain (resume interrupted runs with populate --input <generated file>)",
       "",
       "Global options:",
       "  --url <rpc-url>",
@@ -860,115 +860,206 @@ async function commandPopulate(program, provider, options) {
     options["tee-keypair"]
   );
   const results = [];
-
-  for (const entry of payload.entries.map(normalizePopulateEntry)) {
-    const providerSigner = entry.ownerKeypair
-      ? readKeypairFromFile(entry.ownerKeypair)
-      : null;
-    const providerPublicKey = providerSigner ? providerSigner.publicKey : provider.publicKey;
-    const providerSigners = providerSigner ? [providerSigner] : [];
-
-    await fundProviderIfNeeded(provider, providerPublicKey, lamportsTarget({
-      ...options,
-      "provider-min-lamports": Number.isFinite(entry.providerMinLamports)
-        ? entry.providerMinLamports
-        : options["provider-min-lamports"],
-    }));
-
-    const registryBefore = await program.account.registryState.fetch(registry.address);
-    const metaId = registryBefore.nextMetaId;
-    const dataEntryMeta = deriveMetaPda(program.programId, metaId);
-    const uploadUnit0 = deriveUnitPda(program.programId, metaId, 0);
-
+  const persistPayload = () => {
+    fs.writeFileSync(inputPath, JSON.stringify(payload, null, 2));
+  };
+  const applyFeatCid = async (metaId, unitIndex, uploadUnit, featCid) => {
+    if (!teeSigner) {
+      fail("Populate payload includes featCid updates but no usable tee signer is available");
+    }
     await program.methods
-      .uploadNewMeta({
-        rawCid: entry.rawCid,
-        dataTypes: entry.dataTypes,
-        deviceType: entry.deviceType,
-        deviceModel: entry.deviceModel,
-        serviceProvider: entry.serviceProvider,
-        dayStartTimestamp: bn64(entry.dayStartTimestamp),
-        dayEndTimestamp: bn64(entry.dayEndTimestamp),
-        age: entry.age,
-        gender: entry.gender,
-        height: entry.height,
-        weight: entry.weight,
-        region: entry.region,
-        physicalActivityLevel: entry.physicalActivityLevel,
-        smoker: entry.smoker,
-        diet: entry.diet,
-        chronicConditions: Buffer.from(entry.chronicConditions || []),
-      })
+      .updateUploadUnit(metaId, unitIndex, featCid, ...EMPTY_QUALITY_ARGS)
       .accountsStrict({
         registryState: registry.address,
-        dataEntryMeta,
-        uploadUnit: uploadUnit0,
-        provider: providerPublicKey,
-        systemProgram: SystemProgram.programId,
+        uploadUnit,
+        teeAuthority: teeSigner.publicKey,
       })
-      .signers(providerSigners)
+      .signers(teeSigner.signers)
       .rpc();
+  };
 
-    if (entry.initialFeatCid) {
-      if (!teeSigner) {
-        fail("Populate payload includes featCid updates but no usable tee signer is available");
-      }
-      await program.methods
-        .updateUploadUnit(metaId, 0, entry.initialFeatCid, ...EMPTY_QUALITY_ARGS)
-        .accountsStrict({
-          registryState: registry.address,
-          uploadUnit: uploadUnit0,
-          teeAuthority: teeSigner.publicKey,
-        })
-        .signers(teeSigner.signers)
-        .rpc();
-    }
+  try {
+    for (const rawEntry of payload.entries) {
+      const entry = normalizePopulateEntry(rawEntry);
+      const providerSigner = entry.ownerKeypair
+        ? readKeypairFromFile(entry.ownerKeypair)
+        : null;
+      const providerPublicKey = providerSigner ? providerSigner.publicKey : provider.publicKey;
+      const providerSigners = providerSigner ? [providerSigner] : [];
 
-    for (let uploadIndex = 0; uploadIndex < entry.appendedUploads.length; uploadIndex += 1) {
-      const appended = entry.appendedUploads[uploadIndex];
-      const unitIndex = uploadIndex + 1;
-      const uploadUnit = deriveUnitPda(program.programId, metaId, unitIndex);
-      await program.methods
-        .registerRawUpload(
-          metaId,
-          appended.rawCid,
-          bn64(appended.dayStartTimestamp),
-          bn64(appended.dayEndTimestamp)
-        )
-        .accountsStrict({
-          registryState: registry.address,
-          dataEntryMeta,
-          uploadUnit,
-          provider: providerPublicKey,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers(providerSigners)
-        .rpc();
+      await fundProviderIfNeeded(provider, providerPublicKey, lamportsTarget({
+        ...options,
+        "provider-min-lamports": Number.isFinite(entry.providerMinLamports)
+          ? entry.providerMinLamports
+          : options["provider-min-lamports"],
+      }));
 
-      if (appended.featCid) {
-        if (!teeSigner) {
-          fail("Populate payload includes featCid updates but no usable tee signer is available");
+      let metaId = null;
+      let resumed = false;
+      if (rawEntry.populatedMetaId !== undefined && rawEntry.populatedMetaId !== null) {
+        const candidateId = bn64(rawEntry.populatedMetaId);
+        const existingMeta = await program.account.dataEntryMeta.fetchNullable(
+          deriveMetaPda(program.programId, candidateId)
+        );
+        const unit0 = existingMeta
+          ? await program.account.uploadUnit.fetchNullable(
+              deriveUnitPda(program.programId, candidateId, 0)
+            )
+          : null;
+        const matches =
+          existingMeta &&
+          new PublicKey(existingMeta.owner).equals(providerPublicKey) &&
+          unit0 &&
+          unit0.rawCid === entry.rawCid;
+        if (matches) {
+          metaId = candidateId;
+          resumed = true;
+          if (rawEntry.populatedMetaPending) {
+            delete rawEntry.populatedMetaPending;
+            persistPayload();
+          }
+          log(`Resuming meta ${candidateId.toString()} (rawCid ${entry.rawCid})`);
+        } else if (rawEntry.populatedMetaPending) {
+          // The reserved meta id never landed on chain (or the id was taken by
+          // someone else's meta) — drop the reservation and create fresh.
+          delete rawEntry.populatedMetaId;
+          delete rawEntry.populatedMetaPending;
+          persistPayload();
+        } else {
+          fail(
+            `Entry with rawCid ${entry.rawCid} is marked as meta ${rawEntry.populatedMetaId}, but the ` +
+              "on-chain meta is missing or does not match (owner or unit-0 rawCid differ). Fix or remove " +
+              `the populatedMetaId marker in ${inputPath} and re-run.`
+          );
         }
+      }
+
+      if (metaId === null) {
+        const registryBefore = await program.account.registryState.fetch(registry.address);
+        metaId = registryBefore.nextMetaId;
+        // Reserve the id in the payload before sending, so a transaction that
+        // lands without the client seeing the confirmation is recognized on the
+        // next run instead of minting a duplicate meta.
+        rawEntry.populatedMetaId = metaId.toString();
+        rawEntry.populatedMetaPending = true;
+        persistPayload();
+
         await program.methods
-          .updateUploadUnit(metaId, unitIndex, appended.featCid, ...EMPTY_QUALITY_ARGS)
+          .uploadNewMeta({
+            rawCid: entry.rawCid,
+            dataTypes: entry.dataTypes,
+            deviceType: entry.deviceType,
+            deviceModel: entry.deviceModel,
+            serviceProvider: entry.serviceProvider,
+            dayStartTimestamp: bn64(entry.dayStartTimestamp),
+            dayEndTimestamp: bn64(entry.dayEndTimestamp),
+            age: entry.age,
+            gender: entry.gender,
+            height: entry.height,
+            weight: entry.weight,
+            region: entry.region,
+            physicalActivityLevel: entry.physicalActivityLevel,
+            smoker: entry.smoker,
+            diet: entry.diet,
+            chronicConditions: Buffer.from(entry.chronicConditions || []),
+          })
           .accountsStrict({
             registryState: registry.address,
-            uploadUnit,
-            teeAuthority: teeSigner.publicKey,
+            dataEntryMeta: deriveMetaPda(program.programId, metaId),
+            uploadUnit: deriveUnitPda(program.programId, metaId, 0),
+            provider: providerPublicKey,
+            systemProgram: SystemProgram.programId,
           })
-          .signers(teeSigner.signers)
+          .signers(providerSigners)
           .rpc();
-      }
-    }
 
-    const meta = await program.account.dataEntryMeta.fetch(dataEntryMeta);
-    results.push({
-      metaId: metaId.toString(),
-      dataEntryMeta: dataEntryMeta.toBase58(),
-      owner: providerPublicKey.toBase58(),
-      unitCount: meta.unitCount,
-      totalDuration: meta.totalDuration.toString(),
-    });
+        delete rawEntry.populatedMetaPending;
+        persistPayload();
+      }
+
+      const dataEntryMeta = deriveMetaPda(program.programId, metaId);
+
+      if (entry.initialFeatCid) {
+        const uploadUnit0 = deriveUnitPda(program.programId, metaId, 0);
+        const needsFeatCid = resumed
+          ? (await program.account.uploadUnit.fetch(uploadUnit0)).featCid !== entry.initialFeatCid
+          : true;
+        if (needsFeatCid) {
+          await applyFeatCid(metaId, 0, uploadUnit0, entry.initialFeatCid);
+        }
+      }
+
+      for (let uploadIndex = 0; uploadIndex < entry.appendedUploads.length; uploadIndex += 1) {
+        const appended = entry.appendedUploads[uploadIndex];
+        // Unit 0 is the initial upload; appended upload N lands at unit N+1.
+        const expectedUnitIndex = uploadIndex + 1;
+        // register_raw_upload derives the unit PDA from the meta's current
+        // unit_count, so re-read it from chain instead of trusting a local
+        // counter (a landed-but-unconfirmed tx makes them drift).
+        const metaAccount = await program.account.dataEntryMeta.fetch(dataEntryMeta);
+        const unitCount = Number(metaAccount.unitCount);
+        const uploadUnit = deriveUnitPda(program.programId, metaId, expectedUnitIndex);
+
+        if (expectedUnitIndex < unitCount) {
+          const unit = await program.account.uploadUnit.fetch(uploadUnit);
+          if (unit.rawCid !== appended.rawCid) {
+            fail(
+              `Meta ${metaId.toString()} unit ${expectedUnitIndex} holds rawCid ${unit.rawCid}, expected ` +
+                `${appended.rawCid}. The meta was modified outside populate; refusing to continue.`
+            );
+          }
+          if (appended.featCid && unit.featCid !== appended.featCid) {
+            await applyFeatCid(metaId, expectedUnitIndex, uploadUnit, appended.featCid);
+          }
+          continue;
+        }
+
+        if (unitCount !== expectedUnitIndex) {
+          fail(
+            `Meta ${metaId.toString()} has unit_count ${unitCount} but the next payload upload expects ` +
+              `unit ${expectedUnitIndex}; refusing to register out of order.`
+          );
+        }
+
+        await program.methods
+          .registerRawUpload(
+            metaId,
+            appended.rawCid,
+            bn64(appended.dayStartTimestamp),
+            bn64(appended.dayEndTimestamp)
+          )
+          .accountsStrict({
+            registryState: registry.address,
+            dataEntryMeta,
+            uploadUnit,
+            provider: providerPublicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers(providerSigners)
+          .rpc();
+
+        if (appended.featCid) {
+          await applyFeatCid(metaId, expectedUnitIndex, uploadUnit, appended.featCid);
+        }
+      }
+
+      const meta = await program.account.dataEntryMeta.fetch(dataEntryMeta);
+      results.push({
+        metaId: metaId.toString(),
+        dataEntryMeta: dataEntryMeta.toBase58(),
+        owner: providerPublicKey.toBase58(),
+        unitCount: meta.unitCount,
+        totalDuration: meta.totalDuration.toString(),
+        resumed,
+      });
+    }
+  } catch (error) {
+    log(`Populate failed part-way; progress markers are saved in ${inputPath}.`);
+    log(
+      `Resume with: populate --input ${inputPath} (already-populated entries and units are skipped). ` +
+        "Do not re-run populate-real: regenerating the payload would discard the markers."
+    );
+    throw error;
   }
 
   console.log(
@@ -985,6 +1076,27 @@ async function commandPopulate(program, provider, options) {
 }
 
 async function commandPopulateReal(program, provider, options) {
+  const templatePath = resolveInputPath(requireOption(options, "template"));
+  const outputPath = resolveInputPath(options.output || defaultGeneratedPayloadPath(templatePath));
+  if (fs.existsSync(outputPath)) {
+    let existing = null;
+    try {
+      existing = readJsonFile(outputPath);
+    } catch (error) {
+      // Unreadable JSON — safe to regenerate over it.
+    }
+    if (
+      existing &&
+      Array.isArray(existing.entries) &&
+      existing.entries.some((entry) => entry && entry.populatedMetaId)
+    ) {
+      fail(
+        `${outputPath} contains populate progress markers from a previous run. Resume with ` +
+          `"populate --input ${outputPath}", or delete the file to regenerate from scratch.`
+      );
+    }
+  }
+
   const generated = await generateRealPayloadFromTemplate(options);
   log(`Generated real payload at ${generated.outputPath}`);
   await commandPopulate(program, provider, {

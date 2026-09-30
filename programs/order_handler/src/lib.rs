@@ -82,4 +82,8 @@ pub mod order_handler {
     pub fn sweep_vault_dust(ctx: Context<SweepVaultDust>, job_id: u64) -> Result<()> {
         instructions::sweep_vault_dust(ctx, job_id)
     }
+
+    pub fn refund_stuck_job(ctx: Context<RefundStuckJob>, job_id: u64) -> Result<()> {
+        instructions::refund_stuck_job(ctx, job_id)
+    }
 }

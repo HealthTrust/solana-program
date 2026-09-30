@@ -16,6 +16,20 @@ pub fn submit_preflight_result(
         preflight.selected_participants.len() <= MAX_PARTICIPANTS,
         OrderError::TooManyParticipants
     );
+    require!(
+        !preflight.selected_participants.is_empty(),
+        OrderError::EmptySelectedParticipants
+    );
+    // claim_payout matches a provider by its FIRST index only, so a duplicate
+    // entry would make that share permanently unclaimable.
+    {
+        let mut sorted = preflight.selected_participants.clone();
+        sorted.sort_unstable();
+        require!(
+            sorted.windows(2).all(|pair| pair[0] != pair[1]),
+            OrderError::DuplicateParticipant
+        );
+    }
 
     let job = &mut ctx.accounts.job;
     require_eq!(job.job_id, job_id, OrderError::JobIdMismatch);

@@ -549,7 +549,9 @@ EXECUTED
 COMPLETED
     │
     ├──► claim_payout  (each selected data provider)
-    └──► sweep_vault_dust  (researcher or after all providers claimed)
+    └──► sweep_vault_dust  (researcher only; after all providers claimed OR 30-day claim window)
+
+CONFIRMED / EXECUTED ──► refund_stuck_job  (researcher only; 7 days after last status change) ──► CANCELLED
 ```
 
 ### Accounts
@@ -869,12 +871,14 @@ Callable any time after job is `COMPLETED`.
 ---
 
 #### `sweep_vault_dust`
-**Who calls it:** Researcher (or anyone after all providers claimed)  
-**Signer:** not required — validated by on-chain logic
+**Who calls it:** Researcher only  
+**Signer:** `recipient` (must equal `job.researcher`)
 
-Sweeps leftover lamports (overpayment + integer division rounding) from the vault.
-Allowed if: **all** providers have claimed (all bits set in `claimed_bitmap`), OR the
-`recipient` account is the researcher.
+Sweeps leftover lamports (overpayment + integer division rounding, or unclaimed
+payouts after the window) from the vault down to its rent-exempt minimum.
+Job must be `COMPLETED`, and either **all** providers have claimed (all bits set in
+`claimed_bitmap`) OR `now > job.updated_at + CLAIM_WINDOW_SECS` (30 days after
+finalization). Otherwise fails with `SweepNotAllowed`.
 
 **Accounts required:**
 
@@ -882,7 +886,7 @@ Allowed if: **all** providers have claimed (all bits set in `claimed_bitmap`), O
 |---|---|---|---|
 | `job` | — | — | Read to verify status and all-claimed condition |
 | `escrow_vault` | ✓ | — | PDA: lamports swept from here |
-| `recipient` | ✓ | — | Unchecked destination (must pass logic check) |
+| `recipient` | ✓ | ✓ | The job's researcher (constraint-checked) |
 
 **Instruction arguments:**
 
@@ -891,6 +895,34 @@ Allowed if: **all** providers have claimed (all bits set in `claimed_bitmap`), O
 | `job_id` | `u64` | Job whose vault to sweep |
 
 **Emits:** `VaultDustSwept`
+
+---
+
+#### `refund_stuck_job`
+**Who calls it:** Researcher only  
+**Signer:** `researcher` (must equal `job.researcher`)
+
+Recovers the escrow of a paid job the TEE never completed. Job must be `CONFIRMED`
+or `EXECUTED` and `now > job.updated_at + REFUND_TIMEOUT_SECS` (7 days since the last
+status change), else `InvalidStatus` / `RefundTimeoutNotReached`. Transfers all vault
+lamports above rent-exempt minimum to the researcher and sets the job to `CANCELLED`,
+which blocks `submit_result`, `finalize_job`, `claim_payout` and `sweep_vault_dust`.
+
+**Accounts required:**
+
+| Account | Writable | Signer | Description |
+|---|---|---|---|
+| `job` | ✓ | — | Status → `CANCELLED`, `updated_at` bumped |
+| `escrow_vault` | ✓ | — | PDA: refund taken from here |
+| `researcher` | ✓ | ✓ | The job's researcher; receives the refund |
+
+**Instruction arguments:**
+
+| Argument | Type | Description |
+|---|---|---|
+| `job_id` | `u64` | Job to refund |
+
+**Emits:** `JobCancelled { job_id, refund_amount }`
 
 ---
 
@@ -1367,19 +1399,24 @@ async function parseHistoricalEvents(programId: PublicKey, idl: any) {
 | 6005 | `InvalidTemplateId` | template_id must be greater than zero |
 | 6006 | `EmptyDataTypes` | data_types must not be empty |
 | 6007 | `TooManyDataTypes` | Too many data types (max 18) |
-| 6008 | `InvalidMaxParticipants` | max_participants must be greater than zero |
-| 6009 | `TooManyParticipants` | Too many selected participants (max 50) |
-| 6010 | `InsufficientPayment` | Payment amount is less than the required final_total |
-| 6011 | `ZeroFinalTotal` | final_total must be greater than zero before payment |
-| 6012 | `EmptyResultCid` | result_cid must not be empty |
-| 6013 | `NoParticipants` | No participants to distribute payout to |
-| 6014 | `InsufficientEscrow` | Escrow vault has insufficient lamports |
-| 6015 | `ZeroAmountPerProvider` | Computed amount_per_provider is zero |
-| 6016 | `NotAParticipant` | Signer is not a selected participant for this job |
-| 6017 | `ParticipantIndexOutOfRange` | Participant index exceeds bitmap capacity (max 64 providers) |
-| 6018 | `AlreadyClaimed` | This provider has already claimed their payout |
-| 6019 | `CannotCancelAtThisStage` | Job can only be cancelled in PENDING_PREFLIGHT or AWAITING_CONFIRMATION |
-| 6020 | `SweepNotAllowed` | Not all providers have claimed and caller is not the researcher |
-| 6021 | `Overflow` | Arithmetic overflow |
-| 6022 | `InvalidOwner` | New owner cannot be the zero address |
-| 6023 | `InvalidAuthority` | ROFL authority cannot be the zero address |
+| 6008 | `AlgorithmIdTooLong` | algorithm_id exceeds the 32-byte limit |
+| 6009 | `AlgorithmParamsTooLong` | algorithm_params exceeds the 512-byte limit |
+| 6010 | `InvalidMaxParticipants` | max_participants must be greater than zero |
+| 6011 | `TooManyParticipants` | Too many selected participants (max 50) |
+| 6012 | `InsufficientPayment` | Payment amount is less than the required final_total |
+| 6013 | `ZeroFinalTotal` | final_total must be greater than zero before payment |
+| 6014 | `EmptyResultCid` | result_cid must not be empty |
+| 6015 | `NoParticipants` | No participants to distribute payout to |
+| 6016 | `InsufficientEscrow` | Escrow vault has insufficient lamports |
+| 6017 | `ZeroAmountPerProvider` | Computed amount_per_provider is zero |
+| 6018 | `NotAParticipant` | Signer is not a selected participant for this job |
+| 6019 | `ParticipantIndexOutOfRange` | Participant index exceeds bitmap capacity |
+| 6020 | `AlreadyClaimed` | This provider has already claimed their payout |
+| 6021 | `CannotCancelAtThisStage` | Job can only be cancelled in PENDING_PREFLIGHT or AWAITING_CONFIRMATION |
+| 6022 | `SweepNotAllowed` | Sweep not allowed: providers have unclaimed payouts and the claim window has not elapsed |
+| 6023 | `Overflow` | Arithmetic overflow |
+| 6024 | `InvalidOwner` | New owner cannot be the zero address |
+| 6025 | `InvalidAuthority` | ROFL authority cannot be the zero address |
+| 6026 | `EmptySelectedParticipants` | selected_participants must not be empty |
+| 6027 | `DuplicateParticipant` | selected_participants contains a duplicate provider |
+| 6028 | `RefundTimeoutNotReached` | Refund not allowed yet: the job has not been stuck for the refund timeout |

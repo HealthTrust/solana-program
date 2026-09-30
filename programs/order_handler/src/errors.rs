@@ -46,7 +46,7 @@ pub enum OrderError {
     AlreadyClaimed,
     #[msg("Job can only be cancelled in PENDING_PREFLIGHT or AWAITING_CONFIRMATION")]
     CannotCancelAtThisStage,
-    #[msg("Sweep not allowed: not all providers have claimed and caller is not the researcher")]
+    #[msg("Sweep not allowed: providers have unclaimed payouts and the claim window has not elapsed")]
     SweepNotAllowed,
     #[msg("Arithmetic overflow")]
     Overflow,
@@ -54,4 +54,11 @@ pub enum OrderError {
     InvalidOwner,
     #[msg("ROFL authority cannot be the zero address")]
     InvalidAuthority,
+    // --- Appended below: keep existing discriminants stable. ---
+    #[msg("selected_participants must not be empty")]
+    EmptySelectedParticipants,
+    #[msg("selected_participants contains a duplicate provider")]
+    DuplicateParticipant,
+    #[msg("Refund not allowed yet: the job has not been stuck for the refund timeout")]
+    RefundTimeoutNotReached,
 }

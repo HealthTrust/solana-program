@@ -1,6 +1,11 @@
 param(
   [ValidateSet('deps','start','stop','build','deploy','anchor-test','all-core','all-anchor','ts-test','all')]
-  [string]$Command = 'all'
+  [string]$Command = 'all',
+  # TEST-ONLY: rebuild order_handler with the `short-timeouts` cargo feature
+  # (CLAIM_WINDOW_SECS=6, REFUND_TIMEOUT_SECS=3) and run the timeout tests.
+  # The resulting target/deploy/order_handler.so must NEVER be deployed to
+  # devnet/mainnet -- run a plain `anchor build` afterwards.
+  [switch]$ShortTimeouts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +67,10 @@ function Stop-Validator {
 
 function Build-Anchor {
   Invoke-WslBash "echo 'Running anchor build...'; NO_DNA=1 anchor build"
+  if ($ShortTimeouts) {
+    Write-Warning 'Rebuilding order_handler with TEST-ONLY short-timeouts. Do not deploy this build.'
+    Invoke-WslBash "NO_DNA=1 anchor build -p order_handler --no-idl -- --features short-timeouts"
+  }
 }
 
 function Deploy-Anchor {
@@ -74,6 +83,7 @@ function Run-AnchorTests {
 
 function Run-TsTests {
   Push-Location $repoWin
+  if ($ShortTimeouts) { $env:HT_SHORT_TIMEOUTS = '1' }
   try {
     node .\node_modules\ts-mocha\bin\ts-mocha -p .\tsconfig.json -t 1000000 "tests/**/*.ts"
     if ($LASTEXITCODE -ne 0) {

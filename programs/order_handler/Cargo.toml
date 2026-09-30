@@ -16,6 +16,9 @@ no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
 anchor-debug = []
+# TEST-ONLY: shrinks CLAIM_WINDOW_SECS / REFUND_TIMEOUT_SECS to seconds so the
+# local test suite can exercise the timeout paths. Never deploy a build with it.
+short-timeouts = []
 
 [dependencies]
 anchor-lang = "0.32.1"

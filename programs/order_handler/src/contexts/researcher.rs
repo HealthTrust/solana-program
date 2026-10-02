@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 
+use crate::errors::OrderError;
 use crate::state::{EscrowVault, Job, OrderConfig};
 
 #[derive(Accounts)]
@@ -82,7 +83,35 @@ pub struct SweepVaultDust<'info> {
     )]
     pub escrow_vault: Account<'info, EscrowVault>,
 
-    /// CHECK: recipient is validated in instruction logic.
-    #[account(mut)]
-    pub recipient: UncheckedAccount<'info>,
+    /// Only the job's researcher may sweep, and must sign. The account name is
+    /// kept as `recipient` so existing clients' account maps stay valid.
+    #[account(
+        mut,
+        constraint = recipient.key() == job.researcher @ OrderError::Unauthorized,
+    )]
+    pub recipient: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(job_id: u64)]
+pub struct RefundStuckJob<'info> {
+    #[account(
+        mut,
+        seeds = [b"job", job_id.to_le_bytes().as_ref()],
+        bump = job.bump,
+    )]
+    pub job: Account<'info, Job>,
+
+    #[account(
+        mut,
+        seeds = [b"escrow", job_id.to_le_bytes().as_ref()],
+        bump = escrow_vault.bump,
+    )]
+    pub escrow_vault: Account<'info, EscrowVault>,
+
+    #[account(
+        mut,
+        constraint = researcher.key() == job.researcher @ OrderError::Unauthorized,
+    )]
+    pub researcher: Signer<'info>,
 }

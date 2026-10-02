@@ -141,8 +141,9 @@ function printUsage() {
       "  submit-result         Submit result CID + output hash",
       "  finalize-job          Finalize an executed job",
       "  claim-payout          Claim a provider payout",
-      "  sweep-dust            Sweep remaining lamports from escrow",
+      "  sweep-dust            Sweep remaining escrow to the researcher (after all claims or the claim window)",
       "  cancel-job            Cancel a job as the researcher",
+      "  refund-stuck-job      Refund a paid job the TEE never completed (after the refund timeout)",
       "  fund-actor            Transfer SOL from main wallet to an actor wallet",
       "  set-rofl-authority    Rotate the ROFL authority",
       "",
@@ -575,20 +576,42 @@ async function commandClaimPayout(program, provider, options) {
 }
 
 async function commandSweepDust(program, provider, options) {
+  // The recipient must be the job's researcher and must sign.
+  const researcherSigner = await loadActorSigner(provider, options, "researcher-keypair");
   const jobId = Number(requireOption(options, "job-id"));
-  const recipient = options["recipient"]
-    ? new PublicKey(options["recipient"])
-    : provider.publicKey;
   await program.methods
     .sweepVaultDust(bn64(jobId))
     .accountsStrict({
       job: deriveJobPda(program.programId, jobId),
       escrowVault: deriveEscrowVaultPda(program.programId, jobId),
-      recipient,
+      recipient: researcherSigner.publicKey,
     })
+    .signers(researcherSigner.signers)
     .rpc();
 
-  console.log(JSON.stringify({ action: "sweep-dust", jobId: String(jobId), recipient: recipient.toBase58() }, null, 2));
+  console.log(
+    JSON.stringify(
+      { action: "sweep-dust", jobId: String(jobId), recipient: researcherSigner.publicKey.toBase58() },
+      null,
+      2
+    )
+  );
+}
+
+async function commandRefundStuckJob(program, provider, options) {
+  const researcherSigner = await loadActorSigner(provider, options, "researcher-keypair");
+  const jobId = Number(requireOption(options, "job-id"));
+  await program.methods
+    .refundStuckJob(bn64(jobId))
+    .accountsStrict({
+      job: deriveJobPda(program.programId, jobId),
+      escrowVault: deriveEscrowVaultPda(program.programId, jobId),
+      researcher: researcherSigner.publicKey,
+    })
+    .signers(researcherSigner.signers)
+    .rpc();
+
+  console.log(JSON.stringify({ action: "refund-stuck-job", jobId: String(jobId) }, null, 2));
 }
 
 async function commandCancelJob(program, provider, options) {
@@ -693,6 +716,9 @@ async function main() {
       break;
     case "cancel-job":
       await commandCancelJob(program, provider, options);
+      break;
+    case "refund-stuck-job":
+      await commandRefundStuckJob(program, provider, options);
       break;
     case "fund-actor":
       await commandFundActor(provider, options);

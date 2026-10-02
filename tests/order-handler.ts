@@ -287,6 +287,7 @@ describe("order_handler migration parity", () => {
         escrowVault,
         recipient: researcher.publicKey,
       })
+      .signers([researcher])
       .rpc();
     const vaultAfterSweep = await provider.connection.getBalance(escrowVault);
 
@@ -390,4 +391,370 @@ describe("order_handler migration parity", () => {
       })
       .rpc();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Escrow safety: sweep gating, stuck-job refund, preflight validation.
+//
+// Tests that need a timeout to ELAPSE only run when the program was built with
+// the test-only `short-timeouts` feature (CLAIM_WINDOW_SECS=6,
+// REFUND_TIMEOUT_SECS=3) and HT_SHORT_TIMEOUTS=1 is set -- see
+// `scripts/run-tests.ps1 -ShortTimeouts`. All refusal paths run in every build.
+// ---------------------------------------------------------------------------
+
+const SHORT_TIMEOUTS = process.env.HT_SHORT_TIMEOUTS === "1";
+const TEST_REFUND_TIMEOUT_SECS = 3;
+const TEST_CLAIM_WINDOW_SECS = 6;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Waits until the cluster clock is strictly past `updatedAt + secs`. */
+async function waitForClusterTimePast(updatedAt: number, secs: number) {
+  for (let i = 0; i < 60; i++) {
+    const slot = await provider.connection.getSlot("confirmed");
+    const blockTime = await provider.connection.getBlockTime(slot);
+    if (blockTime !== null && blockTime > updatedAt + secs + 1) return;
+    await sleep(1000);
+  }
+  throw new Error("cluster clock did not advance past the timeout");
+}
+
+async function expectRejected(fn: () => Promise<unknown>): Promise<void> {
+  let rejected = false;
+  try {
+    await fn();
+  } catch (_e) {
+    rejected = true;
+  }
+  expect(rejected, "expected transaction to be rejected").to.equal(true);
+}
+
+describe("order_handler escrow safety", () => {
+  const roflAuthority = anchor.web3.Keypair.generate();
+  const researcher = anchor.web3.Keypair.generate();
+  const providerOne = anchor.web3.Keypair.generate();
+  const providerTwo = anchor.web3.Keypair.generate();
+  const outsider = anchor.web3.Keypair.generate();
+
+  let orderConfig: PublicKey;
+
+  before(async () => {
+    await Promise.all([
+      fundKeypair(roflAuthority),
+      fundKeypair(researcher),
+      fundKeypair(providerOne),
+      fundKeypair(providerTwo),
+      fundKeypair(outsider),
+    ]);
+    orderConfig = await ensureOrderConfigInitialized(roflAuthority.publicKey);
+  });
+
+  beforeEach(async () => {
+    await ensureOrderConfigInitialized(roflAuthority.publicKey);
+  });
+
+  function preflightFor(participants: PublicKey[]) {
+    return {
+      effectiveParticipantsScaled: new anchor.BN(10),
+      qualityTier: 1,
+      finalTotal: new anchor.BN(100_000_000),
+      cohortHash: Array.from(createHash("sha256").update("cohort").digest()),
+      selectedParticipants: participants,
+    };
+  }
+
+  function submitPreflight(jobId: anchor.BN, job: PublicKey, participants: PublicKey[]) {
+    return program.methods
+      .submitPreflightResult(jobId, preflightFor(participants))
+      .accountsStrict({ orderConfig, job, roflAuthority: roflAuthority.publicKey })
+      .signers([roflAuthority])
+      .rpc();
+  }
+
+  function submitResult(jobId: anchor.BN, job: PublicKey) {
+    return program.methods
+      .submitResult(
+        jobId,
+        "bafybeigdyrzt4finalresultcid0000000000000000000000000",
+        Array.from(createHash("sha256").update("attestation").digest())
+      )
+      .accountsStrict({ orderConfig, job, roflAuthority: roflAuthority.publicKey })
+      .signers([roflAuthority])
+      .rpc();
+  }
+
+  function finalize(jobId: anchor.BN, job: PublicKey, escrowVault: PublicKey) {
+    return program.methods
+      .finalizeJob(jobId)
+      .accountsStrict({ orderConfig, job, escrowVault, roflAuthority: roflAuthority.publicKey })
+      .signers([roflAuthority])
+      .rpc();
+  }
+
+  function claim(
+    jobId: anchor.BN,
+    job: PublicKey,
+    escrowVault: PublicKey,
+    who: anchor.web3.Keypair
+  ) {
+    return program.methods
+      .claimPayout(jobId)
+      .accountsStrict({ job, escrowVault, provider: who.publicKey })
+      .signers([who])
+      .rpc();
+  }
+
+  function sweep(
+    jobId: anchor.BN,
+    job: PublicKey,
+    escrowVault: PublicKey,
+    signer: anchor.web3.Keypair
+  ) {
+    return program.methods
+      .sweepVaultDust(jobId)
+      .accountsStrict({ job, escrowVault, recipient: signer.publicKey })
+      .signers([signer])
+      .rpc();
+  }
+
+  function refund(
+    jobId: anchor.BN,
+    job: PublicKey,
+    escrowVault: PublicKey,
+    signer: anchor.web3.Keypair
+  ) {
+    return program.methods
+      .refundStuckJob(jobId)
+      .accountsStrict({ job, escrowVault, researcher: signer.publicKey })
+      .signers([signer])
+      .rpc();
+  }
+
+  async function expectVaultAtRentMinimum(escrowVault: PublicKey) {
+    const vaultInfo = await provider.connection.getAccountInfo(escrowVault);
+    const rentMin = await provider.connection.getMinimumBalanceForRentExemption(
+      vaultInfo!.data.length
+    );
+    expect(vaultInfo!.lamports).to.equal(rentMin);
+  }
+
+  /** Creates a job, runs preflight, and pays. Status = Confirmed. */
+  async function paidJob(
+    participants: PublicKey[] = [providerOne.publicKey, providerTwo.publicKey]
+  ) {
+    const created = await createRequestedJob(researcher, orderConfig);
+    const escrowVault = deriveEscrowVaultPda(created.jobId);
+    await submitPreflight(created.jobId, created.job, participants);
+    await program.methods
+      .confirmJobAndPay(created.jobId, new anchor.BN(200_000_000))
+      .accountsStrict({
+        job: created.job,
+        escrowVault,
+        researcher: researcher.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([researcher])
+      .rpc();
+    return { jobId: created.jobId, job: created.job, escrowVault };
+  }
+
+  /** Paid + executed + finalized job. Status = Completed. */
+  async function completedJob() {
+    const j = await paidJob();
+    await submitResult(j.jobId, j.job);
+    await finalize(j.jobId, j.job, j.escrowVault);
+    return j;
+  }
+
+  // --- preflight validation ---------------------------------------------------
+
+  it("rejects a preflight with an empty participant list", async () => {
+    const created = await createRequestedJob(researcher, orderConfig);
+    await expectAnchorError(
+      () => submitPreflight(created.jobId, created.job, []),
+      "EmptySelectedParticipants"
+    );
+  });
+
+  it("rejects a preflight with duplicate participants", async () => {
+    const created = await createRequestedJob(researcher, orderConfig);
+    await expectAnchorError(
+      () =>
+        submitPreflight(created.jobId, created.job, [
+          providerOne.publicKey,
+          providerTwo.publicKey,
+          providerOne.publicKey,
+        ]),
+      "DuplicateParticipant"
+    );
+    // A clean list is still accepted afterwards.
+    await submitPreflight(created.jobId, created.job, [
+      providerOne.publicKey,
+      providerTwo.publicKey,
+    ]);
+  });
+
+  // --- sweep gating -------------------------------------------------------------
+
+  it("refuses sweep before claims, for non-researchers, and without the researcher's signature", async () => {
+    const j = await completedJob();
+
+    // Outsider as recipient+signer: not the researcher.
+    await expectAnchorError(
+      () => sweep(j.jobId, j.job, j.escrowVault, outsider),
+      "Unauthorized"
+    );
+
+    // Researcher pubkey as recipient but NOT signing: must be refused
+    // (fails client-side with a missing-signature error, and on-chain would
+    // fail the Signer check).
+    await expectRejected(() =>
+      program.methods
+        .sweepVaultDust(j.jobId)
+        .accountsStrict({
+          job: j.job,
+          escrowVault: j.escrowVault,
+          recipient: researcher.publicKey,
+        })
+        .signers([outsider])
+        .rpc()
+    );
+
+    // Researcher, but no provider has claimed and the claim window is open.
+    await expectAnchorError(
+      () => sweep(j.jobId, j.job, j.escrowVault, researcher),
+      "SweepNotAllowed"
+    );
+
+    // Partial claims are still not enough.
+    await claim(j.jobId, j.job, j.escrowVault, providerOne);
+    await expectAnchorError(
+      () => sweep(j.jobId, j.job, j.escrowVault, researcher),
+      "SweepNotAllowed"
+    );
+
+    // Provider two can still claim (escrow was not drained).
+    const before = await provider.connection.getBalance(providerTwo.publicKey);
+    await claim(j.jobId, j.job, j.escrowVault, providerTwo);
+    expect(await provider.connection.getBalance(providerTwo.publicKey)).to.be.greaterThan(
+      before
+    );
+  });
+
+  it("allows the researcher to sweep dust after all providers claimed", async () => {
+    const j = await completedJob();
+    await claim(j.jobId, j.job, j.escrowVault, providerOne);
+    await claim(j.jobId, j.job, j.escrowVault, providerTwo);
+
+    await sweep(j.jobId, j.job, j.escrowVault, researcher);
+    await expectVaultAtRentMinimum(j.escrowVault);
+  });
+
+  (SHORT_TIMEOUTS ? it : it.skip)(
+    "[short-timeouts] allows the researcher to sweep after the claim window with unclaimed payouts",
+    async () => {
+      const j = await completedJob();
+      await claim(j.jobId, j.job, j.escrowVault, providerOne);
+      const completed = await program.account.job.fetch(j.job);
+      await waitForClusterTimePast(completed.updatedAt.toNumber(), TEST_CLAIM_WINDOW_SECS);
+
+      await sweep(j.jobId, j.job, j.escrowVault, researcher);
+      await expectVaultAtRentMinimum(j.escrowVault);
+    }
+  );
+
+  // --- refund_stuck_job -----------------------------------------------------------
+
+  it("refuses refund before the timeout, on wrong status, and for a non-researcher", async () => {
+    // Wrong status: a Completed job can never be refunded.
+    const done = await completedJob();
+    await expectAnchorError(
+      () => refund(done.jobId, done.job, done.escrowVault, researcher),
+      "InvalidStatus"
+    );
+
+    // Confirmed, but the timeout has not elapsed.
+    const j = await paidJob();
+    await expectAnchorError(
+      () => refund(j.jobId, j.job, j.escrowVault, researcher),
+      "RefundTimeoutNotReached"
+    );
+
+    // Executed, still before the timeout.
+    await submitResult(j.jobId, j.job);
+    await expectAnchorError(
+      () => refund(j.jobId, j.job, j.escrowVault, researcher),
+      "RefundTimeoutNotReached"
+    );
+
+    // Wrong signer.
+    await expectAnchorError(
+      () => refund(j.jobId, j.job, j.escrowVault, outsider),
+      "Unauthorized"
+    );
+  });
+
+  (SHORT_TIMEOUTS ? it : it.skip)(
+    "[short-timeouts] refunds a stuck Confirmed job after the timeout and blocks everything after",
+    async () => {
+      const j = await paidJob();
+      const confirmed = await program.account.job.fetch(j.job);
+      await waitForClusterTimePast(confirmed.updatedAt.toNumber(), TEST_REFUND_TIMEOUT_SECS);
+
+      // Wrong signer is refused even after the timeout.
+      await expectAnchorError(
+        () => refund(j.jobId, j.job, j.escrowVault, outsider),
+        "Unauthorized"
+      );
+
+      const researcherBefore = await provider.connection.getBalance(researcher.publicKey);
+      await refund(j.jobId, j.job, j.escrowVault, researcher);
+      const researcherAfter = await provider.connection.getBalance(researcher.publicKey);
+      // Refund of 200_000_000 minus the tx fee.
+      expect(researcherAfter - researcherBefore).to.be.greaterThan(199_000_000);
+
+      const cancelled = await program.account.job.fetch(j.job);
+      expect(cancelled.status).to.deep.equal({ cancelled: {} });
+      await expectVaultAtRentMinimum(j.escrowVault);
+
+      // Nothing can proceed on a refunded job.
+      await expectAnchorError(() => submitResult(j.jobId, j.job), "InvalidStatus");
+      await expectAnchorError(() => finalize(j.jobId, j.job, j.escrowVault), "InvalidStatus");
+      await expectAnchorError(
+        () => claim(j.jobId, j.job, j.escrowVault, providerOne),
+        "InvalidStatus"
+      );
+      await expectAnchorError(
+        () => sweep(j.jobId, j.job, j.escrowVault, researcher),
+        "InvalidStatus"
+      );
+      await expectAnchorError(
+        () => refund(j.jobId, j.job, j.escrowVault, researcher),
+        "InvalidStatus"
+      );
+    }
+  );
+
+  (SHORT_TIMEOUTS ? it : it.skip)(
+    "[short-timeouts] refunds a stuck Executed job after the timeout and blocks finalize/claim",
+    async () => {
+      const j = await paidJob();
+      await submitResult(j.jobId, j.job);
+      const executed = await program.account.job.fetch(j.job);
+      await waitForClusterTimePast(executed.updatedAt.toNumber(), TEST_REFUND_TIMEOUT_SECS);
+
+      await refund(j.jobId, j.job, j.escrowVault, researcher);
+      expect((await program.account.job.fetch(j.job)).status).to.deep.equal({
+        cancelled: {},
+      });
+
+      await expectAnchorError(() => finalize(j.jobId, j.job, j.escrowVault), "InvalidStatus");
+      await expectAnchorError(
+        () => claim(j.jobId, j.job, j.escrowVault, providerTwo),
+        "InvalidStatus"
+      );
+    }
+  );
 });

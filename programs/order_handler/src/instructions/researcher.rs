@@ -2,9 +2,10 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
 use crate::constants::{
-    MAX_ALGORITHM_ID_LEN, MAX_ALGORITHM_PARAMS_LEN, MAX_JOB_DATA_TYPE_LEN, MAX_JOB_DATA_TYPES,
+    CLAIM_WINDOW_SECS, MAX_ALGORITHM_ID_LEN, MAX_ALGORITHM_PARAMS_LEN, MAX_JOB_DATA_TYPE_LEN,
+    MAX_JOB_DATA_TYPES, REFUND_TIMEOUT_SECS,
 };
-use crate::contexts::{CancelJob, ConfirmJobAndPay, RequestJob, SweepVaultDust};
+use crate::contexts::{CancelJob, ConfirmJobAndPay, RefundStuckJob, RequestJob, SweepVaultDust};
 use crate::errors::OrderError;
 use crate::events::{JobCancelled, JobConfirmed, JobRequested, VaultDustSwept};
 use crate::params::JobParams;
@@ -159,20 +160,34 @@ pub fn cancel_job(ctx: Context<CancelJob>, job_id: u64) -> Result<()> {
     Ok(())
 }
 
+/// Lamports held by the escrow vault above its rent-exempt minimum.
+fn vault_excess(vault: &AccountInfo) -> Result<u64> {
+    let rent_exempt = Rent::get()?.minimum_balance(vault.data_len());
+    Ok(vault.lamports().saturating_sub(rent_exempt))
+}
+
 pub fn sweep_vault_dust(ctx: Context<SweepVaultDust>, job_id: u64) -> Result<()> {
     let job = &ctx.accounts.job;
     require_eq!(job.job_id, job_id, OrderError::JobIdMismatch);
     require_eq!(job.status, JobStatus::Completed, OrderError::InvalidStatus);
+    // `recipient == job.researcher` and its signature are enforced by the
+    // account constraints on SweepVaultDust.
 
+    // Providers must be able to claim first: sweeping is only allowed once
+    // every selected provider has claimed, or after the claim window.
     let all_claimed = job.selected_participants.len() == job.claimed_bitmap.count_ones() as usize;
-    let is_researcher = ctx.accounts.recipient.key() == job.researcher;
-    require!(all_claimed || is_researcher, OrderError::SweepNotAllowed);
+    let now = Clock::get()?.unix_timestamp;
+    let window_closes_at = job
+        .updated_at
+        .checked_add(CLAIM_WINDOW_SECS)
+        .ok_or(OrderError::Overflow)?;
+    require!(
+        all_claimed || now > window_closes_at,
+        OrderError::SweepNotAllowed
+    );
 
-    let vault_lamports = ctx.accounts.escrow_vault.get_lamports();
-    let rent = Rent::get()?;
-    let vault_data_len = ctx.accounts.escrow_vault.to_account_info().data_len();
-    let vault_rent_exempt = rent.minimum_balance(vault_data_len);
-    let dust = vault_lamports.checked_sub(vault_rent_exempt).unwrap_or(0);
+    let vault_info = ctx.accounts.escrow_vault.to_account_info();
+    let dust = vault_excess(&vault_info)?;
 
     if dust > 0 {
         ctx.accounts.escrow_vault.sub_lamports(dust)?;
@@ -183,6 +198,48 @@ pub fn sweep_vault_dust(ctx: Context<SweepVaultDust>, job_id: u64) -> Result<()>
         job_id,
         recipient: ctx.accounts.recipient.key(),
         amount: dust,
+    });
+    Ok(())
+}
+
+/// Refunds the escrow of a paid job that the TEE never completed.
+///
+/// Allowed only for the job's researcher, only while the job is Confirmed or
+/// Executed (i.e. paid but not finalized), and only once REFUND_TIMEOUT_SECS
+/// have passed since the last status change. The job moves to Cancelled, which
+/// blocks submit_result / finalize_job / claim_payout / sweep_vault_dust.
+pub fn refund_stuck_job(ctx: Context<RefundStuckJob>, job_id: u64) -> Result<()> {
+    let job = &ctx.accounts.job;
+    require_eq!(job.job_id, job_id, OrderError::JobIdMismatch);
+    // `researcher == job.researcher` and its signature are enforced by the
+    // account constraints on RefundStuckJob.
+    require!(
+        job.status == JobStatus::Confirmed || job.status == JobStatus::Executed,
+        OrderError::InvalidStatus
+    );
+
+    let now = Clock::get()?.unix_timestamp;
+    let refundable_at = job
+        .updated_at
+        .checked_add(REFUND_TIMEOUT_SECS)
+        .ok_or(OrderError::Overflow)?;
+    require!(now > refundable_at, OrderError::RefundTimeoutNotReached);
+
+    let vault_info = ctx.accounts.escrow_vault.to_account_info();
+    let refund = vault_excess(&vault_info)?;
+
+    if refund > 0 {
+        ctx.accounts.escrow_vault.sub_lamports(refund)?;
+        ctx.accounts.researcher.add_lamports(refund)?;
+    }
+
+    let job = &mut ctx.accounts.job;
+    job.status = JobStatus::Cancelled;
+    job.updated_at = now;
+
+    emit!(JobCancelled {
+        job_id,
+        refund_amount: refund,
     });
     Ok(())
 }

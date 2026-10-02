@@ -1064,8 +1064,9 @@ describeDevnet("devnet deployed contracts full flow", () => {
             escrowVault,
             recipient: outsiderProvider.publicKey,
           })
+          .signers([outsiderProvider])
           .rpc(),
-      "SweepNotAllowed"
+      "Unauthorized"
     );
     logStep("guardrails: rejected outsider sweep before all claims as expected");
 
